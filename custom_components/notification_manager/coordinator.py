@@ -30,7 +30,8 @@ class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
 
     def __init__(self, hass: HomeAssistant, entry_data: dict) -> None:
         """Initialise the coordinator."""
-        self._bridge_url: str = entry_data.get(CONF_BRIDGE_URL, "")
+        from .const import DEFAULT_BRIDGE_URL
+        self._bridge_url: str = entry_data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
         self._bridge_token: str = entry_data.get(CONF_BRIDGE_TOKEN, "")
 
         super().__init__(
