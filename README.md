@@ -82,9 +82,26 @@ input_text:
 
 ### Target resolution
 
-- **Phone/Telegram targets** (`notification_tel`): Map person names to `notify.mobile_app_*` services and Telegram chat IDs. Configure in `const.py` → `PHONE_TARGETS`.
-- **WhatsApp targets** (`notification_whatsapp`): Map person names to WhatsApp JIDs. Configure in `const.py` → `WHATSAPP_CONTACTS`.
-- **Alexa targets** (`notification_alexa`): Keywords are matched as substrings against your `media_player.*` entity IDs. Configure in `const.py` → `ALEXA_PLAYERS`.
+**Phone/Telegram** (`notification_tel`):
+- Space-separated **person names** (case-insensitive)
+- `"all"` or empty → sends to default targets list
+- `"none"` / `"aucun"` → skip
+- Names are resolved against `PHONE_TARGETS` dict
+
+**WhatsApp** (`notification_whatsapp`):
+- Space-separated **person names** (case-insensitive)
+- `"none"` / `"aucun"` / empty → skip
+- Names are resolved against `WHATSAPP_CONTACTS` dict
+
+**Alexa** (`notification_alexa`) — pattern matching:
+- Space-separated **keywords** matched as substrings against `media_player.*` entity IDs
+- Example: `"show"` → matches all entities containing "show" (e.g. `media_player.rene_echo_show_2`)
+- Example: `"salon chambre"` → matches entities containing "salon" OR "chambre"
+- Empty → defaults to keyword `"show"` (Echo Show devices)
+- `"aucun"` / `"none"` / `"off"` → skip
+- ⚠️ **No `"all"` keyword** — speakers span multiple locations, broadcasting everywhere is forbidden
+
+> The algorithm is inherited from the original mamagetts automation: substring matching gives flexibility without maintaining a separate name→entity mapping.
 
 ---
 
