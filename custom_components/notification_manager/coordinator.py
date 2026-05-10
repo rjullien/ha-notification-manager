@@ -74,45 +74,34 @@ class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
 
         try:
             if override_ip:
-                # Use a custom resolver so aiohttp keeps the hostname for SNI/TLS
-                # but connects to the override IP.
-                from aiohttp.resolver import AsyncResolver
+                # HA OS containers can't resolve Tailscale MagicDNS.
+                # Write to /etc/hosts at runtime (idempotent) so the
+                # default resolver works with the correct hostname for SNI.
+                import os
+                hosts_line = f"{override_ip} {hostname}"
+                try:
+                    with open("/etc/hosts", "r") as f:
+                        hosts_content = f.read()
+                    if hostname not in hosts_content:
+                        with open("/etc/hosts", "a") as f:
+                            f.write(f"\n{hosts_line}\n")
+                        _LOGGER.info("Added %s to /etc/hosts", hosts_line)
+                except (PermissionError, OSError) as err:
+                    _LOGGER.debug("Cannot write /etc/hosts: %s", err)
 
-                class _StaticResolver(AsyncResolver):
-                    async def resolve(self, host, port=0, family=0):
-                        if host == hostname:
-                            return [
-                                {
-                                    "hostname": host,
-                                    "host": override_ip,
-                                    "port": port or 443,
-                                    "family": 2,  # AF_INET
-                                    "proto": 0,
-                                    "flags": 0,
-                                }
-                            ]
-                        return await super().resolve(host, port, family)
-
-                    async def close(self):
-                        pass
-
-                connector = aiohttp.TCPConnector(
-                    ssl=False,
-                    resolver=_StaticResolver(),
-                )
-                async with aiohttp.ClientSession(connector=connector) as session:
-                    async with session.get(
-                        url,  # Keep original URL (hostname stays for SNI)
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
-                        ssl=False,
-                    ) as resp:
-                        if resp.status == 200:
-                            return SENSOR_STATE_CONNECTED
-                        _LOGGER.debug(
-                            "Bridge health returned HTTP %d → disconnected", resp.status
-                        )
-                        return SENSOR_STATE_DISCONNECTED
+                # Now use the normal HA session (hostname resolves via /etc/hosts)
+                session = async_get_clientsession(self.hass, verify_ssl=False)
+                async with session.get(
+                    url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
+                ) as resp:
+                    if resp.status == 200:
+                        return SENSOR_STATE_CONNECTED
+                    _LOGGER.debug(
+                        "Bridge health returned HTTP %d → disconnected", resp.status
+                    )
+                    return SENSOR_STATE_DISCONNECTED
             else:
                 session = async_get_clientsession(self.hass, verify_ssl=False)
                 async with session.get(
