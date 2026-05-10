@@ -74,6 +74,10 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
+        # Abort early if already configured (prevents 500 on re-add)
+        await self.async_set_unique_id(DOMAIN)
+        self._abort_if_unique_id_configured()
+
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -88,10 +92,6 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if error:
                 errors["base"] = error
             else:
-                # Avoid duplicate entries
-                await self.async_set_unique_id(DOMAIN)
-                self._abort_if_unique_id_configured()
-
                 return self.async_create_entry(
                     title="Notification Manager",
                     data={
