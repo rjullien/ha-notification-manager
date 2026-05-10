@@ -80,10 +80,27 @@ PLATFORMS = ["sensor"]
 
 
 # ── Load private overrides ────────────────────────────────────────────────────
-# const_private.py is gitignored and contains your personal data (contacts,
-# entity_ids, chat_ids). Copy const_private.example.py and fill in your values.
+# Private config is loaded from /config/notification_manager_private.py
+# This file lives OUTSIDE the component directory so HACS updates don't erase it.
+# Fallback: also try .const_private (legacy, inside component dir).
 
-try:
-    from .const_private import *  # noqa: F401, F403
-except ImportError:
-    pass
+import importlib.util as _ilu
+import os as _os
+
+_PRIVATE_PATH = _os.path.join(
+    _os.environ.get("HASS_CONFIG", "/config"),
+    "notification_manager_private.py",
+)
+
+if _os.path.isfile(_PRIVATE_PATH):
+    _spec = _ilu.spec_from_file_location("_nm_private", _PRIVATE_PATH)
+    _mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    for _name in dir(_mod):
+        if not _name.startswith("_"):
+            globals()[_name] = getattr(_mod, _name)
+else:
+    try:
+        from .const_private import *  # noqa: F401, F403
+    except ImportError:
+        pass
