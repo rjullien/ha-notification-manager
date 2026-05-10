@@ -69,8 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Notification Manager from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
-        CONF_BRIDGE_URL: entry.data[CONF_BRIDGE_URL],
-        CONF_BRIDGE_TOKEN: entry.data[CONF_BRIDGE_TOKEN],
+        CONF_BRIDGE_URL: entry.data.get(CONF_BRIDGE_URL, ""),
+        CONF_BRIDGE_TOKEN: entry.data.get(CONF_BRIDGE_TOKEN, ""),
     }
 
     # Forward to sensor platform
