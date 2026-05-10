@@ -471,23 +471,26 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
             bridge_url: str = user_input[CONF_BRIDGE_URL].strip()
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
 
-            error = None
+            # Validate bridge but don't block — warn and continue
             if bridge_url:
                 error = await _async_validate_bridge(
                     self.hass, bridge_url, bridge_token
                 )
-            if error:
-                errors["base"] = error
-            else:
-                self.hass.config_entries.async_update_entry(
-                    self.config_entry,
-                    data={
-                        **self.config_entry.data,
-                        CONF_BRIDGE_URL: bridge_url,
-                        CONF_BRIDGE_TOKEN: bridge_token,
-                    },
-                )
-                return self.async_create_entry(title="", data={})
+                if error:
+                    _LOGGER.warning(
+                        "Bridge validation failed (%s) in options flow — saving anyway.",
+                        error,
+                    )
+
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data={
+                    **self.config_entry.data,
+                    CONF_BRIDGE_URL: bridge_url,
+                    CONF_BRIDGE_TOKEN: bridge_token,
+                },
+            )
+            return self.async_create_entry(title="", data={})
 
         current_url = self.config_entry.data.get(CONF_BRIDGE_URL, DEFAULT_BRIDGE_URL)
         current_token = self.config_entry.data.get(
