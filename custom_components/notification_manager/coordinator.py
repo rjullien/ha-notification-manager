@@ -10,6 +10,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
+import ssl
+from urllib.parse import urlparse
+
 from .const import (
     BRIDGE_HEALTH_ENDPOINT,
     BRIDGE_TIMEOUT,
@@ -21,6 +24,16 @@ from .const import (
     SENSOR_STATE_DISCONNECTED,
     SENSOR_STATE_UNKNOWN,
 )
+
+# Tailscale DNS override: hostname → IP
+# HA OS containers can't resolve MagicDNS names
+_TAILSCALE_DNS_OVERRIDES: dict[str, str] = {}
+
+try:
+    from .const import TAILSCALE_DNS_OVERRIDES
+    _TAILSCALE_DNS_OVERRIDES = TAILSCALE_DNS_OVERRIDES
+except (ImportError, AttributeError):
+    pass
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,21 +65,50 @@ class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
             return SENSOR_STATE_UNKNOWN
 
         url = self._bridge_url.rstrip("/") + BRIDGE_HEALTH_ENDPOINT
-        session = async_get_clientsession(self.hass, verify_ssl=False)
         headers = {"Authorization": f"Bearer {self._bridge_token}"}
 
+        # Check if we need DNS override for Tailscale hostnames
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+        override_ip = _TAILSCALE_DNS_OVERRIDES.get(hostname)
+
         try:
-            async with session.get(
-                url,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
-            ) as resp:
-                if resp.status == 200:
-                    return SENSOR_STATE_CONNECTED
-                _LOGGER.debug(
-                    "Bridge health returned HTTP %d → disconnected", resp.status
+            if override_ip:
+                # Use custom connector with forced IP resolution + SNI
+                ssl_ctx = ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+                connector = aiohttp.TCPConnector(
+                    ssl=ssl_ctx,
                 )
-                return SENSOR_STATE_DISCONNECTED
+                # Rewrite URL to use IP but keep SNI via headers
+                ip_url = url.replace(hostname, override_ip)
+                async with aiohttp.ClientSession(connector=connector) as session:
+                    async with session.get(
+                        ip_url,
+                        headers={**headers, "Host": hostname},
+                        timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
+                        ssl=ssl_ctx,
+                    ) as resp:
+                        if resp.status == 200:
+                            return SENSOR_STATE_CONNECTED
+                        _LOGGER.debug(
+                            "Bridge health returned HTTP %d → disconnected", resp.status
+                        )
+                        return SENSOR_STATE_DISCONNECTED
+            else:
+                session = async_get_clientsession(self.hass, verify_ssl=False)
+                async with session.get(
+                    url,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
+                ) as resp:
+                    if resp.status == 200:
+                        return SENSOR_STATE_CONNECTED
+                    _LOGGER.debug(
+                        "Bridge health returned HTTP %d → disconnected", resp.status
+                    )
+                    return SENSOR_STATE_DISCONNECTED
         except aiohttp.ClientConnectorError:
             _LOGGER.debug("Bridge unreachable → disconnected")
             return SENSOR_STATE_DISCONNECTED
