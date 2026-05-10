@@ -1,0 +1,5 @@
+# Ignore private configuration
+custom_components/notification_manager/const_private.py
+__pycache__/
+*.pyc
+.pytest_cache/

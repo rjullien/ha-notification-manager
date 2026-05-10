@@ -1,0 +1,77 @@
+notify:
+  name: Send Notification
+  description: >
+    Envoie des notifications multicanal : téléphone (push + Telegram),
+    Alexa TTS (avec sauvegarde/restauration du volume), et WhatsApp
+    via whatsmeow-bridge. Remplace le script ManageTTS avec 100%
+    de compatibilité ascendante.
+  fields:
+    message_tel:
+      name: Message téléphone / Telegram
+      description: >
+        Message envoyé aux notifications push et à Telegram.
+        Utilisé également pour WhatsApp.
+      example: "Bonne nuit tout le monde !"
+      required: false
+      selector:
+        text:
+          multiline: true
+
+    message_alexa:
+      name: Message Alexa (français)
+      description: >
+        Message TTS envoyé aux enceintes Alexa en français.
+      example: "Bonne nuit, fermez les volets !"
+      required: false
+      selector:
+        text:
+          multiline: true
+
+    message_alexa_en:
+      name: Message Alexa (anglais)
+      description: >
+        Message TTS envoyé à l'Echo anglais (media_player.jullien_s_echo)
+        avec un délai de 3 secondes.
+      example: "Good night everyone!"
+      required: false
+      selector:
+        text:
+          multiline: true
+
+    notification_tel:
+      name: Destinataires téléphone
+      description: >
+        Destinataires des notifications push et Telegram.
+        Valeurs possibles : Rene, Nicole, Camille, Marie (séparés par espace).
+        Défaut = all (Rene + Nicole). Désactiver = aucun ou none.
+      example: "Rene Nicole"
+      required: false
+      default: "all"
+      selector:
+        text:
+
+    notification_whatsapp:
+      name: Destinataires WhatsApp
+      description: >
+        Destinataires WhatsApp via whatsmeow-bridge.
+        Valeurs possibles : Rene, Nicole, Camille, Nadia, Claire, Jihane, Tristan
+        (séparés par espace). Défaut = none (désactivé).
+      example: "Rene Nicole"
+      required: false
+      default: "none"
+      selector:
+        text:
+
+    notification_alexa:
+      name: Enceintes Alexa
+      description: >
+        Enceintes Alexa cibles pour le TTS. Chaque mot-clé est matché
+        par sous-chaîne dans l'entity_id.
+        Mots-clés : player, echo, show_2, chambre, spot, jardin, sdb,
+        marguerite, rene, dot_2 (séparés par espace).
+        Défaut (vide) = show. Désactiver = aucun.
+      example: "show_2 chambre"
+      required: false
+      default: ""
+      selector:
+        text:
