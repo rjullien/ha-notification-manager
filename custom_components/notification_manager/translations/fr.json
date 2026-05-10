@@ -34,7 +34,7 @@
       },
       "reconfigure_phone": {
         "title": "Reconfigurer — 2/5 Contacts téléphone",
-        "description": "Contacts téléphone au format JSON.\n\nFormat :\n```json\n{\"nom\": {\"mobile\": \"notify.mobile_app_xxx\", \"telegram_chat_id\": 123456789}}\n```\nExemple : {example}\n\n**Destinataires par défaut** (noms séparés par des virgules, utilisés quand 'all' est spécifié).",
+        "description": "Contacts téléphone au format JSON.\n\nFormat : nom → mobile + telegram_chat_id (ou null).\n\nDestinations par défaut : noms séparés par virgule.",
         "data": {
           "phone_targets_json": "Contacts téléphone (JSON)",
           "phone_default_targets": "Destinataires par défaut (ex : rene, nicole)"
@@ -42,14 +42,14 @@
       },
       "reconfigure_whatsapp": {
         "title": "Reconfigurer — 3/5 Contacts WhatsApp",
-        "description": "Contacts WhatsApp au format JSON.\n\nFormat :\n```json\n{\"nom\": \"telephone@s.whatsapp.net\"}\n```\nLes groupes utilisent `ID@g.us`. Exemple : {example}",
+        "description": "Contacts WhatsApp au format JSON.\n\nFormat : nom → JID (numéro@s.whatsapp.net).\nGroupes : ID@g.us.",
         "data": {
           "whatsapp_contacts_json": "Contacts WhatsApp (JSON)"
         }
       },
       "reconfigure_alexa": {
         "title": "Reconfigurer — 4/5 Alexa TTS",
-        "description": "Appareils Echo Alexa et paramètres TTS.\n\nListe JSON des players, ex. :\n```json\n{players_example}\n```",
+        "description": "Appareils Echo Alexa et paramètres TTS.\n\nListe JSON des entity_ids media_player.",
         "data": {
           "alexa_players_json": "Players Alexa (liste JSON d'entity_ids)",
           "alexa_en_target": "Entity_id Alexa anglais",
@@ -59,7 +59,7 @@
       },
       "reconfigure_alerts": {
         "title": "Reconfigurer — 5/5 Alertes",
-        "description": "IDs Telegram à alerter quand le pont WhatsApp est indisponible. Entiers séparés par des virgules.\n\nExemple : {example}",
+        "description": "IDs Telegram à alerter quand le pont WhatsApp est indisponible.\n\nEntiers séparés par virgule.",
         "data": {
           "bridge_alert_chat_ids": "IDs d'alerte (séparés par des virgules)"
         }
