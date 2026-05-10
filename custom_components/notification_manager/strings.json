@@ -34,7 +34,7 @@
       },
       "reconfigure_phone": {
         "title": "Reconfigure — 2/5 Phone Contacts",
-        "description": "Phone contacts as JSON.\n\nFormat:\n```json\n{\"name\": {\"mobile\": \"notify.mobile_app_xxx\", \"telegram_chat_id\": 123456789}}\n```\nExample: {example}\n\n**Default targets** (comma-separated names to notify when 'all' is used).",
+        "description": "Phone contacts as JSON.\n\nFormat:\n```json\n{{\"name\": {{\"mobile\": \"notify.mobile_app_xxx\", \"telegram_chat_id\": 123456789}}}}\n```\nExample: {example}\n\n**Default targets** (comma-separated names to notify when 'all' is used).",
         "data": {
           "phone_targets_json": "Phone targets (JSON)",
           "phone_default_targets": "Default targets (comma-separated, e.g. rene, nicole)"
@@ -42,7 +42,7 @@
       },
       "reconfigure_whatsapp": {
         "title": "Reconfigure — 3/5 WhatsApp Contacts",
-        "description": "WhatsApp contacts as JSON.\n\nFormat:\n```json\n{\"name\": \"phone@s.whatsapp.net\"}\n```\nGroups use `ID@g.us`. Example: {example}",
+        "description": "WhatsApp contacts as JSON.\n\nFormat:\n```json\n{{\"name\": \"phone@s.whatsapp.net\"}}\n```\nGroups use `ID@g.us`. Example: {example}",
         "data": {
           "whatsapp_contacts_json": "WhatsApp contacts (JSON)"
         }
