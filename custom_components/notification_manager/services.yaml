@@ -75,3 +75,54 @@ notify:
       default: ""
       selector:
         text:
+
+    telegram_group:
+      name: Groupe Telegram
+      description: >
+        Nom du groupe Telegram cible (défini dans la configuration).
+        Le message sera envoyé au groupe au lieu des DMs individuels.
+      example: "rene_nicole"
+      required: false
+      default: ""
+      selector:
+        text:
+
+    photo_path:
+      name: Photo (chemin local)
+      description: >
+        Chemin local vers une image à envoyer via Telegram (send_photo).
+        Compatible avec les DMs individuels et les groupes.
+      example: "/config/www/snapshots/piscine.jpg"
+      required: false
+      default: ""
+      selector:
+        text:
+
+    photo_url:
+      name: Photo (URL)
+      description: >
+        URL d'une image à envoyer via Telegram.
+        Alternative à photo_path pour les images distantes.
+      example: "https://example.com/snapshot.jpg"
+      required: false
+      default: ""
+      selector:
+        text:
+
+    parse_mode:
+      name: Parse mode Telegram
+      description: >
+        Mode de parsing pour les messages Telegram.
+        Permet le formatage HTML ou Markdown dans les messages.
+      example: "html"
+      required: false
+      default: ""
+      selector:
+        select:
+          options:
+            - value: ""
+              label: "Aucun (texte brut)"
+            - value: "html"
+              label: "HTML"
+            - value: "markdown"
+              label: "Markdown"

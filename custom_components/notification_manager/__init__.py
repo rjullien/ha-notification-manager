@@ -40,6 +40,7 @@ from .const import (
     SERVICE_NOTIFY,
     VOLUMES_ENTITY,
     WHATSAPP_CONTACTS as _CONST_WHATSAPP_CONTACTS,
+    TELEGRAM_GROUPS as _CONST_TELEGRAM_GROUPS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,6 +54,10 @@ SERVICE_NOTIFY_SCHEMA = vol.Schema(
         vol.Optional("notification_tel", default="all"): cv.string,
         vol.Optional("notification_whatsapp", default="none"): cv.string,
         vol.Optional("notification_alexa", default=""): cv.string,
+        vol.Optional("telegram_group", default=""): cv.string,
+        vol.Optional("photo_path", default=""): cv.string,
+        vol.Optional("photo_url", default=""): cv.string,
+        vol.Optional("parse_mode", default=""): cv.string,
     }
 )
 
@@ -123,6 +128,7 @@ def _get_runtime_config(entry: ConfigEntry) -> dict:
         "alexa_tts_volume": d.get("alexa_tts_volume") if d.get("alexa_tts_volume") is not None else _CONST_ALEXA_TTS_VOLUME,
         "alexa_post_tts_delay": d.get("alexa_post_tts_delay") if d.get("alexa_post_tts_delay") is not None else _CONST_ALEXA_POST_TTS_DELAY,
         "bridge_alert_chat_ids": d.get("bridge_alert_chat_ids") or list(_CONST_BRIDGE_ALERT_CHAT_IDS),
+        "telegram_groups": d.get("telegram_groups") or _CONST_TELEGRAM_GROUPS,
     }
 
 
@@ -137,15 +143,21 @@ async def _async_handle_notify(
     notification_tel: str = data.get("notification_tel", "all")
     notification_whatsapp: str = data.get("notification_whatsapp", "none")
     notification_alexa: str = data.get("notification_alexa", "")
+    telegram_group: str = data.get("telegram_group", "")
+    photo_path: str = data.get("photo_path", "")
+    photo_url: str = data.get("photo_url", "")
+    parse_mode: str = data.get("parse_mode", "")
 
     _LOGGER.debug(
-        "notify called — tel=%r alexa=%r alexa_en=%r n_tel=%r n_wa=%r n_alexa=%r",
+        "notify called — tel=%r alexa=%r alexa_en=%r n_tel=%r n_wa=%r n_alexa=%r group=%r photo=%r",
         message_tel,
         message_alexa,
         message_alexa_en,
         notification_tel,
         notification_whatsapp,
         notification_alexa,
+        telegram_group,
+        photo_path or photo_url,
     )
 
     # Run phone, alexa and whatsapp concurrently (parallel mode)
@@ -154,7 +166,10 @@ async def _async_handle_notify(
     if message_tel and notification_tel.lower() not in ("aucun", "none"):
         tasks.append(
             asyncio.ensure_future(
-                _async_send_phone(hass, entry, message_tel, notification_tel)
+                _async_send_phone(
+                    hass, entry, message_tel, notification_tel,
+                    parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+                )
             )
         )
 
@@ -176,6 +191,16 @@ async def _async_handle_notify(
             )
         )
 
+    if telegram_group:
+        tasks.append(
+            asyncio.ensure_future(
+                _async_send_telegram_group(
+                    hass, entry, message_tel, telegram_group,
+                    parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+                )
+            )
+        )
+
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for idx, result in enumerate(results):
@@ -191,7 +216,8 @@ async def _async_handle_notify(
 # ── Phone + Telegram ──────────────────────────────────────────────────────────
 
 async def _async_send_phone(
-    hass: HomeAssistant, entry: ConfigEntry, message: str, notification_tel: str
+    hass: HomeAssistant, entry: ConfigEntry, message: str, notification_tel: str,
+    parse_mode: str = "", photo_path: str = "", photo_url: str = "",
 ) -> None:
     """Send mobile push + Telegram notifications."""
     cfg = _get_runtime_config(entry)
@@ -222,12 +248,28 @@ async def _async_send_phone(
         telegram_chat_id = target_cfg.get("telegram_chat_id")
         if telegram_chat_id:
             try:
-                await hass.services.async_call(
-                    "telegram_bot",
-                    "send_message",
-                    {"chat_id": telegram_chat_id, "message": message},
-                    blocking=False,
-                )
+                if photo_path or photo_url:
+                    # Send photo with optional caption
+                    photo_data: dict = {"chat_id": telegram_chat_id}
+                    if photo_path:
+                        photo_data["file"] = photo_path
+                    elif photo_url:
+                        photo_data["url"] = photo_url
+                    if message:
+                        photo_data["caption"] = message
+                    if parse_mode:
+                        photo_data["parse_mode"] = parse_mode
+                    await hass.services.async_call(
+                        "telegram_bot", "send_photo", photo_data, blocking=False,
+                    )
+                else:
+                    # Send text message
+                    msg_data: dict = {"chat_id": telegram_chat_id, "message": message}
+                    if parse_mode:
+                        msg_data["parse_mode"] = parse_mode
+                    await hass.services.async_call(
+                        "telegram_bot", "send_message", msg_data, blocking=False,
+                    )
                 _LOGGER.debug("Telegram sent to chat_id %s", telegram_chat_id)
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error(
@@ -241,6 +283,49 @@ def _resolve_phone_targets(notification_tel: str, phone_default_targets: list) -
     if value in ("all", "", "all "):
         return list(phone_default_targets)
     return [t.strip() for t in value.split() if t.strip()]
+
+
+# ── Telegram Groups ─────────────────────────────────────────────────────────────
+
+async def _async_send_telegram_group(
+    hass: HomeAssistant, entry: ConfigEntry, message: str, group_name: str,
+    parse_mode: str = "", photo_path: str = "", photo_url: str = "",
+) -> None:
+    """Send a message or photo to a Telegram group by name."""
+    cfg = _get_runtime_config(entry)
+    telegram_groups = cfg.get("telegram_groups", {})
+    chat_id = telegram_groups.get(group_name.strip().lower())
+    if not chat_id:
+        _LOGGER.warning("Unknown Telegram group: %s", group_name)
+        return
+
+    try:
+        if photo_path or photo_url:
+            photo_data: dict = {"chat_id": int(chat_id)}
+            if photo_path:
+                photo_data["file"] = photo_path
+            elif photo_url:
+                photo_data["url"] = photo_url
+            if message:
+                photo_data["caption"] = message
+            if parse_mode:
+                photo_data["parse_mode"] = parse_mode
+            await hass.services.async_call(
+                "telegram_bot", "send_photo", photo_data, blocking=False,
+            )
+        else:
+            msg_data: dict = {"chat_id": int(chat_id), "message": message}
+            if parse_mode:
+                msg_data["parse_mode"] = parse_mode
+            await hass.services.async_call(
+                "telegram_bot", "send_message", msg_data, blocking=False,
+            )
+        _LOGGER.debug("Telegram group '%s' (chat_id=%s) sent", group_name, chat_id)
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.error(
+            "Failed to send to Telegram group %s (chat_id=%s): %s",
+            group_name, chat_id, exc,
+        )
 
 
 # ── Alexa TTS ─────────────────────────────────────────────────────────────────

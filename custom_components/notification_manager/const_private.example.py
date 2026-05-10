@@ -37,3 +37,9 @@ WHATSAPP_CONTACTS = {
 
 # ── Alert recipients (Telegram chat_ids) ──────────────────────────────────────
 BRIDGE_ALERT_CHAT_IDS = [123456789, 987654321]
+
+# ── Telegram groups (no mobile push, message/photo only) ──────────────────────
+TELEGRAM_GROUPS = {
+    "family": -5162092129,  # Group chat_id (negative for groups)
+    # "another_group": -1001234567890,
+}
