@@ -58,6 +58,11 @@ BRIDGE_RETRIES = 3
 # Telegram chat_ids to alert when bridge is down
 BRIDGE_ALERT_CHAT_IDS: list[int] = []
 
+# ── Telegram groups (override in const_private.py) ────────────────────────────
+
+# Dict of {name: chat_id} for Telegram group targets
+TELEGRAM_GROUPS: dict = {}
+
 # ── Sensor ────────────────────────────────────────────────────────────────────
 
 SENSOR_POLL_INTERVAL_MINUTES = 5
