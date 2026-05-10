@@ -22,11 +22,11 @@ from .const import (
     ALEXA_DEFAULT_KEYWORD,
     ALEXA_DEFAULT_VOLUME,
     ALEXA_EN_DELAY,
-    ALEXA_EN_TARGET,
-    ALEXA_PLAYERS,
-    ALEXA_POST_TTS_DELAY,
-    ALEXA_TTS_VOLUME,
-    BRIDGE_ALERT_CHAT_IDS,
+    ALEXA_EN_TARGET as _CONST_ALEXA_EN_TARGET,
+    ALEXA_PLAYERS as _CONST_ALEXA_PLAYERS,
+    ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
+    ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
+    BRIDGE_ALERT_CHAT_IDS as _CONST_BRIDGE_ALERT_CHAT_IDS,
     BRIDGE_HEALTH_ENDPOINT,
     BRIDGE_RETRIES,
     BRIDGE_SEND_ENDPOINT,
@@ -34,12 +34,12 @@ from .const import (
     CONF_BRIDGE_TOKEN,
     CONF_BRIDGE_URL,
     DOMAIN,
-    PHONE_DEFAULT_TARGETS,
-    PHONE_TARGETS,
+    PHONE_DEFAULT_TARGETS as _CONST_PHONE_DEFAULT_TARGETS,
+    PHONE_TARGETS as _CONST_PHONE_TARGETS,
     PLATFORMS,
     SERVICE_NOTIFY,
     VOLUMES_ENTITY,
-    WHATSAPP_CONTACTS,
+    WHATSAPP_CONTACTS as _CONST_WHATSAPP_CONTACTS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +106,26 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 # ── Core notification handler ─────────────────────────────────────────────────
 
+def _get_runtime_config(entry: ConfigEntry) -> dict:
+    """Return the effective runtime configuration.
+
+    Priority: entry.data (set via reconfigure flow) → const (= const_private.py fallback).
+    This lets the component work immediately after the first install (before reconfigure)
+    while also respecting any values the user has saved through the UI.
+    """
+    d = entry.data
+    return {
+        "phone_targets": d.get("phone_targets") or _CONST_PHONE_TARGETS,
+        "phone_default_targets": d.get("phone_default_targets") or list(_CONST_PHONE_DEFAULT_TARGETS),
+        "whatsapp_contacts": d.get("whatsapp_contacts") or _CONST_WHATSAPP_CONTACTS,
+        "alexa_players": d.get("alexa_players") or _CONST_ALEXA_PLAYERS,
+        "alexa_en_target": d.get("alexa_en_target") or _CONST_ALEXA_EN_TARGET,
+        "alexa_tts_volume": d.get("alexa_tts_volume") if d.get("alexa_tts_volume") is not None else _CONST_ALEXA_TTS_VOLUME,
+        "alexa_post_tts_delay": d.get("alexa_post_tts_delay") if d.get("alexa_post_tts_delay") is not None else _CONST_ALEXA_POST_TTS_DELAY,
+        "bridge_alert_chat_ids": d.get("bridge_alert_chat_ids") or list(_CONST_BRIDGE_ALERT_CHAT_IDS),
+    }
+
+
 async def _async_handle_notify(
     hass: HomeAssistant, entry: ConfigEntry, call: ServiceCall
 ) -> None:
@@ -134,14 +154,14 @@ async def _async_handle_notify(
     if message_tel and notification_tel.lower() not in ("aucun", "none"):
         tasks.append(
             asyncio.ensure_future(
-                _async_send_phone(hass, message_tel, notification_tel)
+                _async_send_phone(hass, entry, message_tel, notification_tel)
             )
         )
 
     if message_alexa and notification_alexa.lower() != "aucun":
         tasks.append(
             asyncio.ensure_future(
-                _async_send_alexa(hass, message_alexa, notification_alexa)
+                _async_send_alexa(hass, entry, message_alexa, notification_alexa)
             )
         )
 
@@ -151,7 +171,7 @@ async def _async_handle_notify(
         tasks.append(
             asyncio.ensure_future(
                 _async_send_whatsapp(
-                    hass, message_tel, notification_whatsapp, bridge_url, bridge_token
+                    hass, entry, message_tel, notification_whatsapp, bridge_url, bridge_token
                 )
             )
         )
@@ -165,20 +185,21 @@ async def _async_handle_notify(
     # English Alexa — after 3-second delay
     if message_alexa_en:
         await asyncio.sleep(ALEXA_EN_DELAY)
-        await _async_send_alexa_en(hass, message_alexa_en)
+        await _async_send_alexa_en(hass, entry, message_alexa_en)
 
 
 # ── Phone + Telegram ──────────────────────────────────────────────────────────
 
 async def _async_send_phone(
-    hass: HomeAssistant, message: str, notification_tel: str
+    hass: HomeAssistant, entry: ConfigEntry, message: str, notification_tel: str
 ) -> None:
     """Send mobile push + Telegram notifications."""
-    targets = _resolve_phone_targets(notification_tel)
+    cfg = _get_runtime_config(entry)
+    targets = _resolve_phone_targets(notification_tel, cfg["phone_default_targets"])
     _LOGGER.debug("Phone targets resolved: %s", targets)
 
     for target_key in targets:
-        target_cfg = PHONE_TARGETS.get(target_key)
+        target_cfg = cfg["phone_targets"].get(target_key)
         if not target_cfg:
             _LOGGER.warning("Unknown phone target: %s", target_key)
             continue
@@ -214,21 +235,22 @@ async def _async_send_phone(
                 )
 
 
-def _resolve_phone_targets(notification_tel: str) -> list[str]:
+def _resolve_phone_targets(notification_tel: str, phone_default_targets: list) -> list[str]:
     """Resolve notification_tel string to list of lowercase target keys."""
     value = notification_tel.strip().lower()
     if value in ("all", "", "all "):
-        return list(PHONE_DEFAULT_TARGETS)
+        return list(phone_default_targets)
     return [t.strip() for t in value.split() if t.strip()]
 
 
 # ── Alexa TTS ─────────────────────────────────────────────────────────────────
 
 async def _async_send_alexa(
-    hass: HomeAssistant, message: str, notification_alexa: str
+    hass: HomeAssistant, entry: ConfigEntry, message: str, notification_alexa: str
 ) -> None:
     """Send Alexa TTS with volume save/restore."""
-    targets = _resolve_alexa_targets(notification_alexa)
+    cfg = _get_runtime_config(entry)
+    targets = _resolve_alexa_targets(notification_alexa, cfg["alexa_players"])
     if not targets:
         _LOGGER.debug("No Alexa targets resolved for %r", notification_alexa)
         return
@@ -266,12 +288,13 @@ async def _async_send_alexa(
         _LOGGER.warning("Could not store volumes in %s: %s", VOLUMES_ENTITY, exc)
 
     # 2. Set volume to TTS level
+    alexa_tts_volume = cfg["alexa_tts_volume"]
     for entity_id in targets:
         try:
             await hass.services.async_call(
                 "media_player",
                 "volume_set",
-                {"entity_id": entity_id, "volume_level": ALEXA_TTS_VOLUME},
+                {"entity_id": entity_id, "volume_level": alexa_tts_volume},
                 blocking=False,
             )
         except Exception as exc:  # noqa: BLE001
@@ -290,7 +313,7 @@ async def _async_send_alexa(
         _LOGGER.error("Failed to send Alexa TTS: %s", exc)
 
     # 4. Wait for speech to finish
-    await asyncio.sleep(ALEXA_POST_TTS_DELAY)
+    await asyncio.sleep(cfg["alexa_post_tts_delay"])
 
     # 5. Restore original volumes
     for entity_id, vol_level in original_volumes.items():
@@ -305,32 +328,34 @@ async def _async_send_alexa(
             _LOGGER.warning("Failed to restore volume for %s: %s", entity_id, exc)
 
 
-def _resolve_alexa_targets(notification_alexa: str) -> list[str]:
+def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list[str]:
     """Resolve notification_alexa string to list of entity_ids."""
     value = notification_alexa.strip().lower()
     if not value:
         # Default: "show" keyword
         keyword = ALEXA_DEFAULT_KEYWORD
-        return [p for p in ALEXA_PLAYERS if keyword in p]
+        return [p for p in alexa_players if keyword in p]
 
     keywords = [k.strip() for k in value.split() if k.strip()]
     matched: list[str] = []
     for keyword in keywords:
-        for player in ALEXA_PLAYERS:
+        for player in alexa_players:
             if keyword in player and player not in matched:
                 matched.append(player)
     return matched
 
 
-async def _async_send_alexa_en(hass: HomeAssistant, message: str) -> None:
+async def _async_send_alexa_en(hass: HomeAssistant, entry: ConfigEntry, message: str) -> None:
     """Send English Alexa TTS to the dedicated English Echo."""
+    cfg = _get_runtime_config(entry)
+    alexa_en_target = cfg["alexa_en_target"]
     try:
         await hass.services.async_call(
             "notify",
             "alexa_media",
             {
                 "message": message,
-                "target": [ALEXA_EN_TARGET],
+                "target": [alexa_en_target],
                 "data": {"type": "tts"},
             },
             blocking=False,
@@ -344,6 +369,7 @@ async def _async_send_alexa_en(hass: HomeAssistant, message: str) -> None:
 
 async def _async_send_whatsapp(
     hass: HomeAssistant,
+    entry: ConfigEntry,
     message: str,
     notification_whatsapp: str,
     bridge_url: str,
@@ -354,7 +380,8 @@ async def _async_send_whatsapp(
         _LOGGER.error("WhatsApp bridge URL not configured")
         return
 
-    targets = _resolve_whatsapp_targets(notification_whatsapp)
+    cfg = _get_runtime_config(entry)
+    targets = _resolve_whatsapp_targets(notification_whatsapp, cfg["whatsapp_contacts"])
     if not targets:
         _LOGGER.debug("No WhatsApp targets for %r", notification_whatsapp)
         return
@@ -417,10 +444,10 @@ async def _async_send_whatsapp(
             alert = (
                 f"⚠️ WhatsApp bridge indisponible — message non délivré: {summary}"
             )
-            await _async_send_bridge_alert(hass, alert)
+            await _async_send_bridge_alert(hass, entry, alert)
 
 
-def _resolve_whatsapp_targets(notification_whatsapp: str) -> list[str]:
+def _resolve_whatsapp_targets(notification_whatsapp: str, whatsapp_contacts: dict) -> list[str]:
     """Resolve notification_whatsapp string to list of JIDs."""
     value = notification_whatsapp.strip().lower()
     if value in ("none", "aucun", ""):
@@ -428,7 +455,7 @@ def _resolve_whatsapp_targets(notification_whatsapp: str) -> list[str]:
     names = [n.strip() for n in value.split() if n.strip()]
     jids: list[str] = []
     for name in names:
-        jid = WHATSAPP_CONTACTS.get(name)
+        jid = whatsapp_contacts.get(name)
         if jid:
             jids.append(jid)
         else:
@@ -436,9 +463,10 @@ def _resolve_whatsapp_targets(notification_whatsapp: str) -> list[str]:
     return jids
 
 
-async def _async_send_bridge_alert(hass: HomeAssistant, message: str) -> None:
+async def _async_send_bridge_alert(hass: HomeAssistant, entry: ConfigEntry, message: str) -> None:
     """Alert admins when the WhatsApp bridge is down."""
-    for chat_id in BRIDGE_ALERT_CHAT_IDS:
+    cfg = _get_runtime_config(entry)
+    for chat_id in cfg["bridge_alert_chat_ids"]:
         try:
             await hass.services.async_call(
                 "telegram_bot",
