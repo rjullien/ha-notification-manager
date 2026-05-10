@@ -381,9 +381,6 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reconfigure_alexa",
             data_schema=schema,
             errors=errors,
-            description_placeholders={
-                "players_example": '["media_player.rene_echo_show_2", "media_player.echo_dot_salon"]'
-            },
         )
 
     async def async_step_reconfigure_alerts(
@@ -433,9 +430,6 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="reconfigure_alerts",
             data_schema=schema,
             errors=errors,
-            description_placeholders={
-                "example": "123456789, 1156623391"
-            },
         )
 
     # ── Options flow ──────────────────────────────────────────────────────────

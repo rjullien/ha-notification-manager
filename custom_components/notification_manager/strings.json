@@ -34,7 +34,7 @@
       },
       "reconfigure_phone": {
         "title": "Reconfigure — 2/5 Phone Contacts",
-        "description": "Phone contacts as JSON.\n\nFormat:\n```json\n{{\"name\": {{\"mobile\": \"notify.mobile_app_xxx\", \"telegram_chat_id\": 123456789}}}}\n```\nExample: {example}\n\n**Default targets** (comma-separated names to notify when 'all' is used).",
+        "description": "Contacts téléphone au format JSON.\n\nFormat: nom → mobile + telegram_chat_id (ou null).\n\nDestinations par défaut : noms séparés par virgule.",
         "data": {
           "phone_targets_json": "Phone targets (JSON)",
           "phone_default_targets": "Default targets (comma-separated, e.g. rene, nicole)"
@@ -42,14 +42,14 @@
       },
       "reconfigure_whatsapp": {
         "title": "Reconfigure — 3/5 WhatsApp Contacts",
-        "description": "WhatsApp contacts as JSON.\n\nFormat:\n```json\n{{\"name\": \"phone@s.whatsapp.net\"}}\n```\nGroups use `ID@g.us`. Example: {example}",
+        "description": "Contacts WhatsApp au format JSON.\n\nFormat: nom → JID (numéro@s.whatsapp.net).\nGroupes : ID@g.us.",
         "data": {
           "whatsapp_contacts_json": "WhatsApp contacts (JSON)"
         }
       },
       "reconfigure_alexa": {
         "title": "Reconfigure — 4/5 Alexa TTS",
-        "description": "Alexa Echo devices and TTS settings.\n\nPlayers JSON list, e.g.:\n```json\n{players_example}\n```",
+        "description": "Enceintes Alexa Echo et paramètres TTS.\n\nListe JSON des entity_ids media_player.",
         "data": {
           "alexa_players_json": "Alexa players (JSON list of entity_ids)",
           "alexa_en_target": "English Alexa entity_id",
@@ -59,7 +59,7 @@
       },
       "reconfigure_alerts": {
         "title": "Reconfigure — 5/5 Alerts",
-        "description": "Telegram chat IDs to alert when the WhatsApp bridge is unavailable. Comma-separated integers.\n\nExample: {example}",
+        "description": "Chat IDs Telegram pour les alertes quand le pont WhatsApp est indisponible.\n\nEntiers séparés par virgule.",
         "data": {
           "bridge_alert_chat_ids": "Alert chat IDs (comma-separated)"
         }
