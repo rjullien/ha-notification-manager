@@ -64,12 +64,13 @@ class NotificationManagerSensor(
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        from .const import VERSION
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": "Notification Manager",
             "manufacturer": "rjullien",
             "model": "Notification Manager",
-            "sw_version": "1.0.1",
+            "sw_version": VERSION,
         }
 
     @property
