@@ -1,5 +1,13 @@
 """Constants for the Notification Manager integration."""
 
+import json
+import pathlib
+
+_MANIFEST = json.loads(
+    (pathlib.Path(__file__).parent / "manifest.json").read_text()
+)
+VERSION: str = _MANIFEST["version"]
+
 DOMAIN = "notification_manager"
 CONF_BRIDGE_URL = "bridge_url"
 CONF_BRIDGE_TOKEN = "bridge_token"
