@@ -425,8 +425,6 @@ def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list
     # Special values
     if value in ("aucun", "none", "off", "disable"):
         return []
-    if value in ("all", "tous", "tout"):
-        return list(alexa_players)
 
     keywords = [k.strip() for k in value.split() if k.strip()]
     matched: list[str] = []
