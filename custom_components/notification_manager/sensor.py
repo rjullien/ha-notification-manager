@@ -39,8 +39,10 @@ async def async_setup_entry(
     # Store coordinator so __init__ can update it when options change
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
 
-    # Initial refresh (non-blocking; will show unknown until first poll)
-    await coordinator.async_config_entry_first_refresh()
+    # Start polling (non-blocking; sensor shows 'unknown' until first successful poll)
+    # Do NOT use async_config_entry_first_refresh — if bridge is unreachable
+    # it raises ConfigEntryNotReady and prevents the whole integration from loading.
+    coordinator.async_set_updated_data(SENSOR_STATE_UNKNOWN)
 
     async_add_entities(
         [NotificationManagerSensor(coordinator, entry, SENSOR_DESCRIPTION)]
