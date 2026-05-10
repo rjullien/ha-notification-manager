@@ -170,23 +170,18 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             bridge_url: str = user_input[CONF_BRIDGE_URL].strip()
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
 
-            error = None
-            if bridge_url:
-                error = await _async_validate_bridge(
-                    self.hass, bridge_url, bridge_token
-                )
-            if error:
-                errors["base"] = error
-            else:
-                self._reconfigure_data: dict[str, Any] = {
-                    CONF_BRIDGE_URL: bridge_url,
-                    CONF_BRIDGE_TOKEN: bridge_token,
-                }
-                # Carry forward all existing data; step results will overwrite
-                for k, v in entry.data.items():
-                    if k not in self._reconfigure_data:
-                        self._reconfigure_data[k] = v
-                return await self.async_step_reconfigure_phone()
+            # Skip bridge validation in reconfigure — bridge may not be
+            # reachable from HA (e.g. Tailscale addon network isolation).
+            # The URL is still saved and used at runtime.
+            self._reconfigure_data: dict[str, Any] = {
+                CONF_BRIDGE_URL: bridge_url,
+                CONF_BRIDGE_TOKEN: bridge_token,
+            }
+            # Carry forward all existing data; step results will overwrite
+            for k, v in entry.data.items():
+                if k not in self._reconfigure_data:
+                    self._reconfigure_data[k] = v
+            return await self.async_step_reconfigure_phone()
 
         current_url = entry.data.get(CONF_BRIDGE_URL, DEFAULT_BRIDGE_URL)
         current_token = entry.data.get(CONF_BRIDGE_TOKEN, DEFAULT_BRIDGE_TOKEN)
