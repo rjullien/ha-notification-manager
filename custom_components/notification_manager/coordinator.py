@@ -74,21 +74,38 @@ class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
 
         try:
             if override_ip:
-                # Use custom connector with forced IP resolution + SNI
-                ssl_ctx = ssl.create_default_context()
-                ssl_ctx.check_hostname = False
-                ssl_ctx.verify_mode = ssl.CERT_NONE
+                # Use a custom resolver so aiohttp keeps the hostname for SNI/TLS
+                # but connects to the override IP.
+                from aiohttp.resolver import AsyncResolver
+
+                class _StaticResolver(AsyncResolver):
+                    async def resolve(self, host, port=0, family=0):
+                        if host == hostname:
+                            return [
+                                {
+                                    "hostname": host,
+                                    "host": override_ip,
+                                    "port": port or 443,
+                                    "family": 2,  # AF_INET
+                                    "proto": 0,
+                                    "flags": 0,
+                                }
+                            ]
+                        return await super().resolve(host, port, family)
+
+                    async def close(self):
+                        pass
+
                 connector = aiohttp.TCPConnector(
-                    ssl=ssl_ctx,
+                    ssl=False,
+                    resolver=_StaticResolver(),
                 )
-                # Rewrite URL to use IP but keep SNI via headers
-                ip_url = url.replace(hostname, override_ip)
                 async with aiohttp.ClientSession(connector=connector) as session:
                     async with session.get(
-                        ip_url,
-                        headers={**headers, "Host": hostname},
+                        url,  # Keep original URL (hostname stays for SNI)
+                        headers=headers,
                         timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
-                        ssl=ssl_ctx,
+                        ssl=False,
                     ) as resp:
                         if resp.status == 200:
                             return SENSOR_STATE_CONNECTED
