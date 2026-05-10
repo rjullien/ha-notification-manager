@@ -33,6 +33,7 @@ from .const import (
     BRIDGE_TIMEOUT,
     CONF_BRIDGE_TOKEN,
     CONF_BRIDGE_URL,
+    DEFAULT_BRIDGE_URL,
     DOMAIN,
     PHONE_DEFAULT_TARGETS as _CONST_PHONE_DEFAULT_TARGETS,
     PHONE_TARGETS as _CONST_PHONE_TARGETS,
@@ -181,7 +182,7 @@ async def _async_handle_notify(
         )
 
     if message_tel and notification_whatsapp.lower() not in ("none", "aucun", ""):
-        bridge_url = entry.data.get(CONF_BRIDGE_URL, "")
+        bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
         bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
         tasks.append(
             asyncio.ensure_future(
