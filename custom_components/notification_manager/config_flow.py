@@ -108,9 +108,18 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             bridge_url: str = user_input[CONF_BRIDGE_URL].strip()
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
 
-            # Skip bridge validation — bridge may not be reachable from
-            # HA container (Tailscale MagicDNS not available in HA OS).
-            # URL is saved and used at runtime with DNS overrides.
+            # Validate bridge but don't block — warn and continue
+            if bridge_url:
+                error = await _async_validate_bridge(
+                    self.hass, bridge_url, bridge_token
+                )
+                if error:
+                    _LOGGER.warning(
+                        "Bridge validation failed (%s) — saving config anyway. "
+                        "Bridge may not be reachable from this container (e.g. Tailscale DNS).",
+                        error,
+                    )
+
             return self.async_create_entry(
                 title="Notification Manager",
                 data={
@@ -165,9 +174,17 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             bridge_url: str = user_input[CONF_BRIDGE_URL].strip()
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
 
-            # Skip bridge validation in reconfigure — bridge may not be
-            # reachable from HA (e.g. Tailscale addon network isolation).
-            # The URL is still saved and used at runtime.
+            # Validate bridge but don't block — warn and continue
+            if bridge_url:
+                error = await _async_validate_bridge(
+                    self.hass, bridge_url, bridge_token
+                )
+                if error:
+                    _LOGGER.warning(
+                        "Bridge validation failed (%s) during reconfigure — saving anyway.",
+                        error,
+                    )
+
             self._reconfigure_data: dict[str, Any] = {
                 CONF_BRIDGE_URL: bridge_url,
                 CONF_BRIDGE_TOKEN: bridge_token,
