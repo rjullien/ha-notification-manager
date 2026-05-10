@@ -1,1 +1,88 @@
-{"config":{"abort":{"already_configured":"Notification Manager est déjà configuré."},"error":{"cannot_connect":"Impossible de se connecter au pont WhatsApp. Vérifiez l'URL et que le service est démarré.","invalid_auth":"Token d'authentification invalide.","invalid_url":"URL invalide.","unknown":"Erreur inattendue."},"step":{"user":{"data":{"bridge_token":"Token d'authentification (optionnel)","bridge_url":"URL du pont WhatsApp (optionnel)"},"description":"Configuration Notification Manager. Le pont WhatsApp est optionnel — laissez vide pour utiliser uniquement Alexa et les notifications téléphone.","title":"Notification Manager — Configuration"}}},"options":{"error":{"cannot_connect":"Impossible de se connecter au pont WhatsApp.","invalid_auth":"Token d'authentification invalide.","invalid_url":"URL invalide.","unknown":"Erreur inattendue."},"step":{"init":{"data":{"bridge_token":"Token d'authentification","bridge_url":"URL du pont WhatsApp"},"title":"Options Notification Manager"}}}}
+{
+  "config": {
+    "abort": {
+      "already_configured": "Notification Manager is already configured.",
+      "reconfigure_successful": "Reconfiguration successful."
+    },
+    "error": {
+      "bridge_url_required": "Bridge URL is required.",
+      "cannot_connect": "Unable to connect to WhatsApp bridge. Check the URL and make sure the service is running.",
+      "invalid_auth": "Invalid authentication token.",
+      "invalid_url": "Invalid URL.",
+      "invalid_json": "Invalid JSON — check the syntax.",
+      "invalid_volume": "Volume must be a number between 0.0 and 1.0.",
+      "invalid_number": "Must be a positive integer.",
+      "invalid_chat_ids": "Invalid chat IDs — enter comma-separated integers.",
+      "unknown": "Unexpected error."
+    },
+    "step": {
+      "user": {
+        "title": "Notification Manager — Setup",
+        "description": "Configure the WhatsApp bridge URL and token (whatsmeow-bridge). Leave blank if you don't use WhatsApp.",
+        "data": {
+          "bridge_url": "WhatsApp bridge URL (optional)",
+          "bridge_token": "Authentication token (optional)"
+        }
+      },
+      "reconfigure_bridge": {
+        "title": "Reconfigure — 1/5 WhatsApp Bridge",
+        "description": "Update the WhatsApp bridge URL and authentication token.",
+        "data": {
+          "bridge_url": "WhatsApp bridge URL",
+          "bridge_token": "Authentication token"
+        }
+      },
+      "reconfigure_phone": {
+        "title": "Reconfigure — 2/5 Phone Contacts",
+        "description": "Phone contacts as JSON.\n\nFormat:\n```json\n{\"name\": {\"mobile\": \"notify.mobile_app_xxx\", \"telegram_chat_id\": 123456789}}\n```\nExample: {example}\n\n**Default targets** (comma-separated names to notify when 'all' is used).",
+        "data": {
+          "phone_targets_json": "Phone targets (JSON)",
+          "phone_default_targets": "Default targets (comma-separated, e.g. rene, nicole)"
+        }
+      },
+      "reconfigure_whatsapp": {
+        "title": "Reconfigure — 3/5 WhatsApp Contacts",
+        "description": "WhatsApp contacts as JSON.\n\nFormat:\n```json\n{\"name\": \"phone@s.whatsapp.net\"}\n```\nGroups use `ID@g.us`. Example: {example}",
+        "data": {
+          "whatsapp_contacts_json": "WhatsApp contacts (JSON)"
+        }
+      },
+      "reconfigure_alexa": {
+        "title": "Reconfigure — 4/5 Alexa TTS",
+        "description": "Alexa Echo devices and TTS settings.\n\nPlayers JSON list, e.g.:\n```json\n{players_example}\n```",
+        "data": {
+          "alexa_players_json": "Alexa players (JSON list of entity_ids)",
+          "alexa_en_target": "English Alexa entity_id",
+          "alexa_tts_volume": "TTS volume (0.0 – 1.0)",
+          "alexa_post_tts_delay": "Post-TTS delay in seconds (integer)"
+        }
+      },
+      "reconfigure_alerts": {
+        "title": "Reconfigure — 5/5 Alerts",
+        "description": "Telegram chat IDs to alert when the WhatsApp bridge is unavailable. Comma-separated integers.\n\nExample: {example}",
+        "data": {
+          "bridge_alert_chat_ids": "Alert chat IDs (comma-separated)"
+        }
+      }
+    }
+  },
+  "options": {
+    "error": {
+      "bridge_url_required": "Bridge URL is required.",
+      "cannot_connect": "Unable to connect to the WhatsApp bridge.",
+      "invalid_auth": "Invalid authentication token.",
+      "invalid_url": "Invalid URL.",
+      "unknown": "Unexpected error."
+    },
+    "step": {
+      "init": {
+        "title": "Notification Manager Options",
+        "description": "Update the WhatsApp bridge connection. Use Reconfigure (⚙ Configure) for all other settings.",
+        "data": {
+          "bridge_url": "WhatsApp bridge URL",
+          "bridge_token": "Authentication token"
+        }
+      }
+    }
+  }
+}
