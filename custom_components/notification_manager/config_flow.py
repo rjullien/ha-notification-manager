@@ -108,21 +108,16 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             bridge_url: str = user_input[CONF_BRIDGE_URL].strip()
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
 
-            error = None
-            if bridge_url:
-                error = await _async_validate_bridge(
-                    self.hass, bridge_url, bridge_token
-                )
-            if error:
-                errors["base"] = error
-            else:
-                return self.async_create_entry(
-                    title="Notification Manager",
-                    data={
-                        CONF_BRIDGE_URL: bridge_url,
-                        CONF_BRIDGE_TOKEN: bridge_token,
-                    },
-                )
+            # Skip bridge validation — bridge may not be reachable from
+            # HA container (Tailscale MagicDNS not available in HA OS).
+            # URL is saved and used at runtime with DNS overrides.
+            return self.async_create_entry(
+                title="Notification Manager",
+                data={
+                    CONF_BRIDGE_URL: bridge_url,
+                    CONF_BRIDGE_TOKEN: bridge_token,
+                },
+            )
 
         suggested_url = (
             user_input.get(CONF_BRIDGE_URL, DEFAULT_BRIDGE_URL)
