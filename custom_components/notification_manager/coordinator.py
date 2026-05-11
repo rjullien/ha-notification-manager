@@ -38,6 +38,20 @@ except (ImportError, AttributeError):
 _LOGGER = logging.getLogger(__name__)
 
 
+def _inject_hosts_entry(ip: str, hostname: str) -> None:
+    """Inject a hostname→IP mapping into /etc/hosts (idempotent, blocking I/O)."""
+    hosts_line = f"{ip} {hostname}"
+    try:
+        with open("/etc/hosts", "r") as f:
+            hosts_content = f.read()
+        if hostname not in hosts_content:
+            with open("/etc/hosts", "a") as f:
+                f.write(f"\n{hosts_line}\n")
+            _LOGGER.info("Added %s to /etc/hosts", hosts_line)
+    except (PermissionError, OSError) as err:
+        _LOGGER.debug("Cannot write /etc/hosts: %s", err)
+
+
 class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
     """Polls the WhatsApp bridge /health endpoint every 5 minutes."""
 
@@ -77,17 +91,9 @@ class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
                 # HA OS containers can't resolve Tailscale MagicDNS.
                 # Write to /etc/hosts at runtime (idempotent) so the
                 # default resolver works with the correct hostname for SNI.
-                import os
-                hosts_line = f"{override_ip} {hostname}"
-                try:
-                    with open("/etc/hosts", "r") as f:
-                        hosts_content = f.read()
-                    if hostname not in hosts_content:
-                        with open("/etc/hosts", "a") as f:
-                            f.write(f"\n{hosts_line}\n")
-                        _LOGGER.info("Added %s to /etc/hosts", hosts_line)
-                except (PermissionError, OSError) as err:
-                    _LOGGER.debug("Cannot write /etc/hosts: %s", err)
+                await self.hass.async_add_executor_job(
+                    _inject_hosts_entry, override_ip, hostname
+                )
 
                 # Now use the normal HA session (hostname resolves via /etc/hosts)
                 session = async_get_clientsession(self.hass, verify_ssl=False)

@@ -465,7 +465,6 @@ def _ensure_tailscale_dns(bridge_url: str) -> None:
     /etc/hosts (idempotent) so aiohttp can reach the bridge.
     """
     from urllib.parse import urlparse
-    import os
 
     try:
         from .const import TAILSCALE_DNS_OVERRIDES
@@ -520,7 +519,7 @@ async def _async_send_whatsapp(
     _LOGGER.debug("WhatsApp targets: %s", targets)
 
     # Ensure Tailscale MagicDNS hostname is resolvable from HA container
-    _ensure_tailscale_dns(bridge_url)
+    await hass.async_add_executor_job(_ensure_tailscale_dns, bridge_url)
 
     session = async_get_clientsession(hass, verify_ssl=False)
     headers = {
