@@ -473,7 +473,10 @@ async def _async_send_whatsapp(
     cfg = _get_runtime_config(entry)
     targets = _resolve_whatsapp_targets(notification_whatsapp, cfg["whatsapp_contacts"])
     if not targets:
-        _LOGGER.debug("No WhatsApp targets for %r", notification_whatsapp)
+        _LOGGER.warning(
+            "No valid WhatsApp targets resolved for %r — message not sent",
+            notification_whatsapp,
+        )
         return
 
     _LOGGER.debug("WhatsApp targets: %s", targets)
@@ -544,12 +547,21 @@ def _resolve_whatsapp_targets(notification_whatsapp: str, whatsapp_contacts: dic
         return []
     names = [n.strip() for n in value.split() if n.strip()]
     jids: list[str] = []
+    unknown_names: list[str] = []
     for name in names:
         jid = whatsapp_contacts.get(name)
         if jid:
             jids.append(jid)
         else:
-            _LOGGER.warning("Unknown WhatsApp contact: %s", name)
+            unknown_names.append(name)
+    if unknown_names:
+        available = ", ".join(sorted(whatsapp_contacts.keys())) or "(aucun configuré)"
+        _LOGGER.error(
+            "Unknown WhatsApp contact(s): %s. Available contacts: %s. "
+            "Add missing contacts via Settings → Integrations → Notification Manager → Reconfigure.",
+            ", ".join(unknown_names),
+            available,
+        )
     return jids
 
 

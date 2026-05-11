@@ -117,3 +117,24 @@ class TestWhatsAppTargetResolution:
     def test_unknown_contact_skipped(self):
         result = _resolve_whatsapp_targets("rene unknown", _SAMPLE_WA_CONTACTS)
         assert result == ["33600000001@s.whatsapp.net"]
+
+    def test_unknown_contact_logs_error(self, caplog):
+        """Unknown contacts must produce an ERROR log with available contacts listed."""
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            result = _resolve_whatsapp_targets("baptiste unknown", _SAMPLE_WA_CONTACTS)
+        assert result == []
+        assert "Unknown WhatsApp contact(s): baptiste, unknown" in caplog.text
+        assert "nicole" in caplog.text  # available contacts listed
+        assert "rene" in caplog.text
+        assert "Reconfigure" in caplog.text
+
+    def test_all_unknown_contacts_returns_empty(self, caplog):
+        """When ALL requested contacts are unknown, result is empty and error is logged."""
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            result = _resolve_whatsapp_targets("foo bar", _SAMPLE_WA_CONTACTS)
+        assert result == []
+        assert "Unknown WhatsApp contact(s)" in caplog.text
