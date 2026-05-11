@@ -455,6 +455,44 @@ async def _async_send_alexa_en(hass: HomeAssistant, entry: ConfigEntry, message:
         _LOGGER.error("Failed to send English Alexa TTS: %s", exc)
 
 
+# ── Tailscale DNS helper ─────────────────────────────────────────────────────
+
+def _ensure_tailscale_dns(bridge_url: str) -> None:
+    """Ensure Tailscale MagicDNS hostname is resolvable from /etc/hosts.
+
+    HA OS containers cannot resolve Tailscale MagicDNS names natively.
+    If TAILSCALE_DNS_OVERRIDES maps the hostname to an IP, inject it into
+    /etc/hosts (idempotent) so aiohttp can reach the bridge.
+    """
+    from urllib.parse import urlparse
+    import os
+
+    try:
+        from .const import TAILSCALE_DNS_OVERRIDES
+    except (ImportError, AttributeError):
+        return
+
+    if not TAILSCALE_DNS_OVERRIDES:
+        return
+
+    parsed = urlparse(bridge_url)
+    hostname = parsed.hostname or ""
+    override_ip = TAILSCALE_DNS_OVERRIDES.get(hostname)
+    if not override_ip:
+        return
+
+    hosts_line = f"{override_ip} {hostname}"
+    try:
+        with open("/etc/hosts", "r") as f:
+            hosts_content = f.read()
+        if hostname not in hosts_content:
+            with open("/etc/hosts", "a") as f:
+                f.write(f"\n{hosts_line}\n")
+            _LOGGER.info("Added Tailscale DNS override to /etc/hosts: %s", hosts_line)
+    except (PermissionError, OSError) as err:
+        _LOGGER.debug("Cannot write /etc/hosts: %s", err)
+
+
 # ── WhatsApp ──────────────────────────────────────────────────────────────────
 
 async def _async_send_whatsapp(
@@ -480,6 +518,9 @@ async def _async_send_whatsapp(
         return
 
     _LOGGER.debug("WhatsApp targets: %s", targets)
+
+    # Ensure Tailscale MagicDNS hostname is resolvable from HA container
+    _ensure_tailscale_dns(bridge_url)
 
     session = async_get_clientsession(hass, verify_ssl=False)
     headers = {
