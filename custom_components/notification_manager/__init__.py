@@ -264,10 +264,10 @@ async def _async_send_phone(
                         "telegram_bot", "send_photo", photo_data, blocking=False,
                     )
                 else:
-                    # Send text message
+                    # Send text message (force plain_text parse_mode to avoid
+                    # telegram_bot default markdown parsing breaking messages)
                     msg_data: dict = {"chat_id": telegram_chat_id, "message": message}
-                    if parse_mode:
-                        msg_data["parse_mode"] = parse_mode
+                    msg_data["parse_mode"] = parse_mode if parse_mode else "plain_text"
                     await hass.services.async_call(
                         "telegram_bot", "send_message", msg_data, blocking=False,
                     )
@@ -316,8 +316,7 @@ async def _async_send_telegram_group(
             )
         else:
             msg_data: dict = {"chat_id": int(chat_id), "message": message}
-            if parse_mode:
-                msg_data["parse_mode"] = parse_mode
+            msg_data["parse_mode"] = parse_mode if parse_mode else "plain_text"
             await hass.services.async_call(
                 "telegram_bot", "send_message", msg_data, blocking=False,
             )
