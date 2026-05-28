@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 import aiohttp
 import voluptuous as vol
@@ -27,7 +26,6 @@ from .const import (
     ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
     ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
     BRIDGE_ALERT_CHAT_IDS as _CONST_BRIDGE_ALERT_CHAT_IDS,
-    BRIDGE_HEALTH_ENDPOINT,
     BRIDGE_RETRIES,
     BRIDGE_SEND_ENDPOINT,
     BRIDGE_TIMEOUT,
@@ -76,6 +74,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Reload the entry whenever its config changes (options flow or reconfigure
+    # flow). Without this, the coordinator keeps polling the old bridge URL/token
+    # until Home Assistant restarts.
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
     # Register the notification service
     async def handle_notify(call: ServiceCall) -> None:
         await _async_handle_notify(hass, entry, call)
@@ -108,6 +111,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
 
     return unload_ok
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the config entry when its data changes.
+
+    Triggered by the options flow and the reconfigure flow so the coordinator
+    picks up the new bridge URL/token without requiring a HA restart.
+    """
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 # ── Core notification handler ─────────────────────────────────────────────────
@@ -374,6 +386,8 @@ async def _async_send_alexa(
         _LOGGER.warning("Could not store volumes in %s: %s", VOLUMES_ENTITY, exc)
 
     # 2. Set volume to TTS level
+    # blocking=True so the volume is actually applied BEFORE the TTS plays;
+    # otherwise the announcement can start at the previous volume.
     alexa_tts_volume = cfg["alexa_tts_volume"]
     for entity_id in targets:
         try:
@@ -381,7 +395,7 @@ async def _async_send_alexa(
                 "media_player",
                 "volume_set",
                 {"entity_id": entity_id, "volume_level": alexa_tts_volume},
-                blocking=False,
+                blocking=True,
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Failed to set volume for %s: %s", entity_id, exc)
