@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 import aiohttp
 import voluptuous as vol
@@ -27,7 +26,6 @@ from .const import (
     ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
     ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
     BRIDGE_ALERT_CHAT_IDS as _CONST_BRIDGE_ALERT_CHAT_IDS,
-    BRIDGE_HEALTH_ENDPOINT,
     BRIDGE_RETRIES,
     BRIDGE_SEND_ENDPOINT,
     BRIDGE_TIMEOUT,
@@ -76,6 +74,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # Reload the entry whenever its config changes (options flow or reconfigure
+    # flow). Without this, the coordinator keeps polling the old bridge URL/token
+    # until Home Assistant restarts.
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
     # Register the notification service
     async def handle_notify(call: ServiceCall) -> None:
         await _async_handle_notify(hass, entry, call)
@@ -108,6 +111,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
 
     return unload_ok
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Reload the config entry when its data changes.
+
+    Triggered by the options flow and the reconfigure flow so the coordinator
+    picks up the new bridge URL/token without requiring a HA restart.
+    """
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 # ── Core notification handler ─────────────────────────────────────────────────
