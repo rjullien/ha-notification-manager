@@ -386,8 +386,6 @@ async def _async_send_alexa(
         _LOGGER.warning("Could not store volumes in %s: %s", VOLUMES_ENTITY, exc)
 
     # 2. Set volume to TTS level
-    # blocking=True so the volume is actually applied BEFORE the TTS plays;
-    # otherwise the announcement can start at the previous volume.
     alexa_tts_volume = cfg["alexa_tts_volume"]
     for entity_id in targets:
         try:
@@ -395,7 +393,7 @@ async def _async_send_alexa(
                 "media_player",
                 "volume_set",
                 {"entity_id": entity_id, "volume_level": alexa_tts_volume},
-                blocking=True,
+                blocking=False,
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.warning("Failed to set volume for %s: %s", entity_id, exc)
