@@ -273,7 +273,7 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             errors=errors,
             description_placeholders={
-                "example": '{"rene": {"mobile": "notify.mobile_app_iphone_rene", "telegram_chat_id": 123456789}}'
+                "example": '{"alice": {"mobile": "notify.mobile_app_iphone_alice", "telegram_chat_id": 123456789}}'
             },
         )
 
@@ -282,7 +282,7 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Step 3/5 — WhatsApp contacts (JSON).
 
-        whatsapp_contacts : {"rene": "33600000000@s.whatsapp.net"}
+        whatsapp_contacts : {"alice": "33600000000@s.whatsapp.net"}
         """
         entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         errors: dict[str, str] = {}
@@ -318,7 +318,7 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             errors=errors,
             description_placeholders={
-                "example": '{"rene": "33600000000@s.whatsapp.net", "famille": "120363000000000000@g.us"}'
+                "example": '{"alice": "33600000000@s.whatsapp.net", "family": "120363000000000000@g.us"}'
             },
         )
 
