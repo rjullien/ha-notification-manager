@@ -13,7 +13,7 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -90,6 +90,86 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=SERVICE_NOTIFY_SCHEMA,
     )
 
+    # ── Bridge diagnostic services ────────────────────────────────────────────
+
+    BRIDGE_LOGS_SCHEMA = vol.Schema({
+        vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
+        vol.Optional("level", default=""): cv.string,
+    })
+
+    async def handle_bridge_logs(call: ServiceCall) -> dict:
+        """Fetch logs from the WhatsApp bridge."""
+        bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
+        bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
+
+        if not bridge_url:
+            return {"error": "bridge_url not configured"}
+
+        url = bridge_url.rstrip("/") + "/logs"
+        params = {"limit": str(call.data.get("limit", 100))}
+        level = call.data.get("level", "").strip()
+        if level:
+            params["level"] = level
+
+        headers = {"Authorization": f"Bearer {bridge_token}"}
+        http_session = async_get_clientsession(hass, verify_ssl=False)
+
+        try:
+            async with http_session.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status != 200:
+                    return {"error": f"HTTP {resp.status}", "body": await resp.text()}
+                return await resp.json()
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    hass.services.async_register(
+        DOMAIN,
+        "whatsapp_bridge_logs",
+        handle_bridge_logs,
+        schema=BRIDGE_LOGS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
+    async def handle_bridge_restart(call: ServiceCall) -> dict:
+        """Restart the WhatsApp bridge (soft reconnect)."""
+        bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
+        bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
+
+        if not bridge_url:
+            return {"error": "bridge_url not configured"}
+
+        url = bridge_url.rstrip("/") + "/restart"
+        headers = {
+            "Authorization": f"Bearer {bridge_token}",
+            "Content-Type": "application/json",
+        }
+        http_session = async_get_clientsession(hass, verify_ssl=False)
+
+        try:
+            async with http_session.post(
+                url,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    return {"error": f"HTTP {resp.status}", "body": await resp.text()}
+                return await resp.json()
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+    hass.services.async_register(
+        DOMAIN,
+        "whatsapp_bridge_restart",
+        handle_bridge_restart,
+        schema=vol.Schema({}),
+        supports_response=SupportsResponse.ONLY,
+    )
+
     _LOGGER.info("Notification Manager integration loaded (entry %s)", entry.entry_id)
     return True
 
@@ -106,9 +186,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
-    # Only remove service when last entry is removed
+    # Only remove services when last entry is removed
     if not hass.data[DOMAIN]:
         hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
+        hass.services.async_remove(DOMAIN, "whatsapp_bridge_logs")
+        hass.services.async_remove(DOMAIN, "whatsapp_bridge_restart")
 
     return unload_ok
 
