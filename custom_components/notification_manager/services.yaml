@@ -126,3 +126,35 @@ notify:
               label: "HTML"
             - value: "markdown"
               label: "Markdown"
+
+whatsapp_bridge_logs:
+  name: "WhatsApp Bridge Logs"
+  description: "Fetch recent logs from the WhatsApp bridge (response-only, no state stored)"
+  fields:
+    limit:
+      name: "Limit"
+      description: "Maximum number of log entries to return"
+      required: false
+      default: 100
+      example: 50
+      selector:
+        number:
+          min: 1
+          max: 500
+    level:
+      name: "Level"
+      description: "Filter by log level (error, warn, info). Empty = all levels"
+      required: false
+      default: ""
+      example: "error"
+      selector:
+        select:
+          options:
+            - ""
+            - "error"
+            - "warn"
+            - "info"
+
+whatsapp_bridge_restart:
+  name: "WhatsApp Bridge Restart"
+  description: "Trigger a soft restart of the WhatsApp bridge (disconnect + reconnect)"
