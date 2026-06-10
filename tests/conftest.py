@@ -8,6 +8,9 @@ import pytest
 ha_mock = MagicMock()
 ha_mock.core.HomeAssistant = MagicMock
 ha_mock.core.ServiceCall = MagicMock
+# Passthrough decorator — bridge_http decorates async_get_bridge_session with
+# @callback; a MagicMock decorator would replace the real function.
+ha_mock.core.callback = lambda f: f
 ha_mock.config_entries.ConfigEntry = MagicMock
 ha_mock.exceptions.Unauthorized = type("Unauthorized", (Exception,), {})
 ha_mock.helpers.config_validation = MagicMock()
@@ -24,6 +27,11 @@ ha_mock.loader.async_get_integration = AsyncMock()
 # imports aiohttp.resolver.DefaultResolver — both need importable stand-ins.
 aiohttp_mock = MagicMock()
 aiohttp_mock.abc.AbstractResolver = type("AbstractResolver", (), {})
+# Real exception classes: `except aiohttp.ClientConnectorError` requires a
+# BaseException subclass, a MagicMock attribute would raise TypeError.
+aiohttp_mock.ClientConnectorError = type("ClientConnectorError", (Exception,), {})
+aiohttp_mock.InvalidURL = type("InvalidURL", (Exception,), {})
+aiohttp_mock.ClientTimeout = MagicMock
 aiohttp_resolver_mock = MagicMock()
 aiohttp_resolver_mock.DefaultResolver = MagicMock
 

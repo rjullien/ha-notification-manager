@@ -27,6 +27,7 @@ with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
     if "notification_manager.__init__" in sys.modules:
         del sys.modules["notification_manager.__init__"]
+    import notification_manager.__init__ as _nm
     from notification_manager.__init__ import (
         _resolve_phone_targets,
         _resolve_alexa_targets,
@@ -74,9 +75,9 @@ class TestAlexaTargetResolution:
     """Test _resolve_alexa_targets function."""
 
     def test_empty_uses_default_keyword(self):
-        with patch(
-            "notification_manager.__init__.ALEXA_DEFAULT_KEYWORD", "show"
-        ):
+        # patch.object on the kept module reference — string-target patching
+        # would re-import a fresh module copy and patch the wrong object.
+        with patch.object(_nm, "ALEXA_DEFAULT_KEYWORD", "show"):
             result = _resolve_alexa_targets("", _SAMPLE_ALEXA_PLAYERS)
         assert "media_player.echo_show_2" in result
         assert "media_player.echo_show_chambre" in result
