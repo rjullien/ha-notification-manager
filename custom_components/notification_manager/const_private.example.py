@@ -1,7 +1,10 @@
 """Private constants — YOUR personal configuration.
 
-Copy this file to const_private.py and fill in your real values.
-const_private.py is gitignored and will never be committed.
+Preferred location: copy this file to /config/notification_manager_private.py
+(outside the component directory, so HACS updates never erase it).
+Legacy fallback: const_private.py next to this file (gitignored).
+
+Never commit real names, chat IDs, phone numbers or tokens.
 """
 
 # ── Alexa media players ───────────────────────────────────────────────────────
@@ -40,6 +43,13 @@ BRIDGE_ALERT_CHAT_IDS = [123456789, 987654321]
 
 # ── Telegram groups (no mobile push, message/photo only) ──────────────────────
 TELEGRAM_GROUPS = {
-    "family": -5162092129,  # Group chat_id (negative for groups)
-    # "another_group": -1001234567890,
+    "family": -1001234567890,  # Placeholder — group chat_ids are negative
+    # "another_group": -1009876543210,
 }
+
+# ── Tailscale DNS overrides (optional) ────────────────────────────────────────
+# HA OS containers can't resolve MagicDNS names. Map hostname → Tailscale IP;
+# resolution happens in-process (no /etc/hosts modification).
+# TAILSCALE_DNS_OVERRIDES = {
+#     "bridge-host.your-tailnet.ts.net": "100.64.0.10",
+# }

@@ -8,15 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Awaitable
 
 import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .bridge_http import async_close_bridge_sessions, async_get_bridge_session
 from .const import (
     ALEXA_DEFAULT_KEYWORD,
     ALEXA_DEFAULT_VOLUME,
@@ -31,18 +33,21 @@ from .const import (
     BRIDGE_TIMEOUT,
     CONF_BRIDGE_TOKEN,
     CONF_BRIDGE_URL,
+    CONF_VERIFY_SSL,
     DEFAULT_BRIDGE_URL,
+    DEFAULT_VERIFY_SSL,
     DOMAIN,
     PHONE_DEFAULT_TARGETS as _CONST_PHONE_DEFAULT_TARGETS,
     PHONE_TARGETS as _CONST_PHONE_TARGETS,
     PLATFORMS,
     SERVICE_NOTIFY,
-    VOLUMES_ENTITY,
     WHATSAPP_CONTACTS as _CONST_WHATSAPP_CONTACTS,
     TELEGRAM_GROUPS as _CONST_TELEGRAM_GROUPS,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+DATA_ALEXA_LOCK = "_alexa_lock"
 
 # ── Service schema ────────────────────────────────────────────────────────────
 SERVICE_NOTIFY_SCHEMA = vol.Schema(
@@ -61,6 +66,34 @@ SERVICE_NOTIFY_SCHEMA = vol.Schema(
 )
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _run_logged(coro: Awaitable, label: str) -> None:
+    """Await a background coroutine and log (never raise) its failure."""
+    try:
+        await coro
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.error("%s failed: %s", label, exc)
+
+
+async def _async_require_admin(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Restrict a service to admin users.
+
+    Calls without a user context (automations, scripts, system) are allowed.
+    """
+    user_id = getattr(call.context, "user_id", None)
+    if not user_id:
+        return
+    user = await hass.auth.async_get_user(user_id)
+    if user is None or not user.is_admin:
+        raise Unauthorized()
+
+
+def _entry_verify_ssl(entry: ConfigEntry) -> bool:
+    """Return the configured TLS verification flag for the bridge."""
+    return entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+
+
 # ── Setup / teardown ──────────────────────────────────────────────────────────
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -69,7 +102,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {
         CONF_BRIDGE_URL: entry.data.get(CONF_BRIDGE_URL, ""),
         CONF_BRIDGE_TOKEN: entry.data.get(CONF_BRIDGE_TOKEN, ""),
+        CONF_VERIFY_SSL: _entry_verify_ssl(entry),
     }
+    # Serialises Alexa volume save→TTS→restore cycles so overlapping notify
+    # calls can't capture the TTS volume as the "original" one.
+    hass.data[DOMAIN].setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
 
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -90,15 +127,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=SERVICE_NOTIFY_SCHEMA,
     )
 
-    # ── Bridge diagnostic services ────────────────────────────────────────────
+    # ── Bridge diagnostic services (admin only — logs may contain numbers
+    #    and message contents) ──────────────────────────────────────────────
 
     BRIDGE_LOGS_SCHEMA = vol.Schema({
         vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
-        vol.Optional("level", default=""): cv.string,
+        vol.Optional("level", default=""): vol.In(["", "error", "warn", "info"]),
     })
 
     async def handle_bridge_logs(call: ServiceCall) -> dict:
         """Fetch logs from the WhatsApp bridge."""
+        await _async_require_admin(hass, call)
+
         bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
         bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
 
@@ -112,7 +152,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             params["level"] = level
 
         headers = {"Authorization": f"Bearer {bridge_token}"}
-        http_session = async_get_clientsession(hass, verify_ssl=False)
+        http_session = async_get_bridge_session(hass, _entry_verify_ssl(entry))
 
         try:
             async with http_session.get(
@@ -137,6 +177,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def handle_bridge_restart(call: ServiceCall) -> dict:
         """Restart the WhatsApp bridge (soft reconnect)."""
+        await _async_require_admin(hass, call)
+
         bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
         bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
 
@@ -148,7 +190,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "Authorization": f"Bearer {bridge_token}",
             "Content-Type": "application/json",
         }
-        http_session = async_get_clientsession(hass, verify_ssl=False)
+        http_session = async_get_bridge_session(hass, _entry_verify_ssl(entry))
 
         try:
             async with http_session.post(
@@ -186,11 +228,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
-    # Only remove services when last entry is removed
-    if not hass.data[DOMAIN]:
+    # Only remove services when the last entry is removed (internal keys
+    # such as the Alexa lock or cached sessions start with "_").
+    remaining_entries = [k for k in hass.data.get(DOMAIN, {}) if not k.startswith("_")]
+    if not remaining_entries:
         hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
         hass.services.async_remove(DOMAIN, "whatsapp_bridge_logs")
         hass.services.async_remove(DOMAIN, "whatsapp_bridge_restart")
+        await async_close_bridge_sessions(hass)
+        hass.data.pop(DOMAIN, None)
 
     return unload_ok
 
@@ -255,7 +301,29 @@ async def _async_handle_notify(
         photo_path or photo_url,
     )
 
-    # Run phone, alexa and whatsapp concurrently (parallel mode)
+    # Alexa runs as detached background tasks: the FR flow holds the speakers
+    # for post_tts_delay seconds and the EN flow has its own start delay —
+    # neither should block the service call nor wait on slow WhatsApp retries.
+    if message_alexa and notification_alexa.strip().lower() not in (
+        "aucun", "none", "off", "disable"
+    ):
+        hass.async_create_task(
+            _run_logged(
+                _async_send_alexa(hass, entry, message_alexa, notification_alexa),
+                "Alexa TTS",
+            )
+        )
+
+    if message_alexa_en:
+        hass.async_create_task(
+            _run_logged(
+                _async_send_alexa_en_delayed(hass, entry, message_alexa_en),
+                "English Alexa TTS",
+            )
+        )
+
+    # Phone, WhatsApp and Telegram group run concurrently and are awaited so
+    # automations calling the service in blocking mode get delivery feedback.
     tasks: list[asyncio.Task] = []
 
     if message_tel and notification_tel.lower() not in ("aucun", "none"):
@@ -268,44 +336,39 @@ async def _async_handle_notify(
             )
         )
 
-    if message_alexa and notification_alexa.lower() != "aucun":
-        tasks.append(
-            asyncio.ensure_future(
-                _async_send_alexa(hass, entry, message_alexa, notification_alexa)
-            )
-        )
-
     if message_tel and notification_whatsapp.lower() not in ("none", "aucun", ""):
         bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
         bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
         tasks.append(
             asyncio.ensure_future(
                 _async_send_whatsapp(
-                    hass, entry, message_tel, notification_whatsapp, bridge_url, bridge_token
+                    hass, entry, message_tel, notification_whatsapp,
+                    bridge_url, bridge_token, _entry_verify_ssl(entry),
                 )
             )
         )
 
     if telegram_group:
-        tasks.append(
-            asyncio.ensure_future(
-                _async_send_telegram_group(
-                    hass, entry, message_tel, telegram_group,
-                    parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+        if message_tel or photo_path or photo_url:
+            tasks.append(
+                asyncio.ensure_future(
+                    _async_send_telegram_group(
+                        hass, entry, message_tel, telegram_group,
+                        parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+                    )
                 )
             )
-        )
+        else:
+            _LOGGER.warning(
+                "telegram_group %r requested but no message_tel/photo provided — skipping",
+                telegram_group,
+            )
 
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for idx, result in enumerate(results):
             if isinstance(result, Exception):
                 _LOGGER.error("Notification task %d failed: %s", idx, result)
-
-    # English Alexa — after 3-second delay
-    if message_alexa_en:
-        await asyncio.sleep(ALEXA_EN_DELAY)
-        await _async_send_alexa_en(hass, entry, message_alexa_en)
 
 
 # ── Phone + Telegram ──────────────────────────────────────────────────────────
@@ -314,68 +377,93 @@ async def _async_send_phone(
     hass: HomeAssistant, entry: ConfigEntry, message: str, notification_tel: str,
     parse_mode: str = "", photo_path: str = "", photo_url: str = "",
 ) -> None:
-    """Send mobile push + Telegram notifications."""
+    """Send mobile push + Telegram notifications (all targets in parallel)."""
     cfg = _get_runtime_config(entry)
     targets = _resolve_phone_targets(notification_tel, cfg["phone_default_targets"])
     _LOGGER.debug("Phone targets resolved: %s", targets)
 
+    sends: list[Awaitable] = []
     for target_key in targets:
         target_cfg = cfg["phone_targets"].get(target_key)
         if not target_cfg:
             _LOGGER.warning("Unknown phone target: %s", target_key)
             continue
-
-        # Mobile push
-        mobile_service = target_cfg["mobile"]
-        domain, service = mobile_service.split(".", 1)
-        try:
-            await hass.services.async_call(
-                domain,
-                service,
-                {"message": message},
-                blocking=False,
+        sends.append(
+            _async_send_phone_target(
+                hass, target_cfg, message,
+                parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
             )
-            _LOGGER.debug("Mobile push sent to %s", mobile_service)
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.error("Failed to send mobile push to %s: %s", mobile_service, exc)
+        )
 
-        # Telegram
-        telegram_chat_id = target_cfg.get("telegram_chat_id")
-        if telegram_chat_id:
-            try:
-                if photo_path or photo_url:
-                    # Send photo with optional caption
-                    photo_data: dict = {"chat_id": telegram_chat_id}
-                    if photo_path:
-                        photo_data["file"] = photo_path
-                    elif photo_url:
-                        photo_data["url"] = photo_url
-                    if message:
-                        photo_data["caption"] = message
-                    if parse_mode:
-                        photo_data["parse_mode"] = parse_mode
-                    await hass.services.async_call(
-                        "telegram_bot", "send_photo", photo_data, blocking=False,
-                    )
-                else:
-                    # Send text message
-                    msg_data: dict = {"chat_id": telegram_chat_id, "message": message}
-                    if parse_mode:
-                        msg_data["parse_mode"] = parse_mode
-                    await hass.services.async_call(
-                        "telegram_bot", "send_message", msg_data, blocking=False,
-                    )
-                _LOGGER.debug("Telegram sent to chat_id %s", telegram_chat_id)
-            except Exception as exc:  # noqa: BLE001
-                _LOGGER.error(
-                    "Failed to send Telegram to %s: %s", telegram_chat_id, exc
-                )
+    if sends:
+        await asyncio.gather(*sends)
+
+
+async def _async_send_phone_target(
+    hass: HomeAssistant, target_cfg: dict, message: str,
+    parse_mode: str = "", photo_path: str = "", photo_url: str = "",
+) -> None:
+    """Send mobile push + Telegram to a single phone target."""
+    # Mobile push — blocking=True so delivery errors actually surface here.
+    mobile_service = target_cfg["mobile"]
+    domain, service = mobile_service.split(".", 1)
+    try:
+        await hass.services.async_call(
+            domain,
+            service,
+            {"message": message},
+            blocking=True,
+        )
+        _LOGGER.debug("Mobile push sent to %s", mobile_service)
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.error("Failed to send mobile push to %s: %s", mobile_service, exc)
+
+    # Telegram
+    telegram_chat_id = target_cfg.get("telegram_chat_id")
+    if telegram_chat_id:
+        try:
+            await _async_call_telegram(
+                hass, telegram_chat_id, message,
+                parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+            )
+            _LOGGER.debug("Telegram sent to chat_id %s", telegram_chat_id)
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.error(
+                "Failed to send Telegram to %s: %s", telegram_chat_id, exc
+            )
+
+
+async def _async_call_telegram(
+    hass: HomeAssistant, chat_id: int, message: str,
+    parse_mode: str = "", photo_path: str = "", photo_url: str = "",
+) -> None:
+    """Call telegram_bot.send_photo / send_message (blocking, errors raise)."""
+    if photo_path or photo_url:
+        photo_data: dict = {"chat_id": chat_id}
+        if photo_path:
+            photo_data["file"] = photo_path
+        elif photo_url:
+            photo_data["url"] = photo_url
+        if message:
+            photo_data["caption"] = message
+        if parse_mode:
+            photo_data["parse_mode"] = parse_mode
+        await hass.services.async_call(
+            "telegram_bot", "send_photo", photo_data, blocking=True,
+        )
+    else:
+        msg_data: dict = {"chat_id": chat_id, "message": message}
+        if parse_mode:
+            msg_data["parse_mode"] = parse_mode
+        await hass.services.async_call(
+            "telegram_bot", "send_message", msg_data, blocking=True,
+        )
 
 
 def _resolve_phone_targets(notification_tel: str, phone_default_targets: list) -> list[str]:
     """Resolve notification_tel string to list of lowercase target keys."""
     value = notification_tel.strip().lower()
-    if value in ("all", "", "all "):
+    if value in ("all", ""):
         return list(phone_default_targets)
     return [t.strip() for t in value.split() if t.strip()]
 
@@ -395,40 +483,51 @@ async def _async_send_telegram_group(
         return
 
     try:
-        if photo_path or photo_url:
-            photo_data: dict = {"chat_id": int(chat_id)}
-            if photo_path:
-                photo_data["file"] = photo_path
-            elif photo_url:
-                photo_data["url"] = photo_url
-            if message:
-                photo_data["caption"] = message
-            if parse_mode:
-                photo_data["parse_mode"] = parse_mode
-            await hass.services.async_call(
-                "telegram_bot", "send_photo", photo_data, blocking=False,
-            )
-        else:
-            msg_data: dict = {"chat_id": int(chat_id), "message": message}
-            if parse_mode:
-                msg_data["parse_mode"] = parse_mode
-            await hass.services.async_call(
-                "telegram_bot", "send_message", msg_data, blocking=False,
-            )
-        _LOGGER.debug("Telegram group '%s' (chat_id=%s) sent", group_name, chat_id)
+        chat_id_int = int(chat_id)
+    except (TypeError, ValueError):
+        _LOGGER.error(
+            "Invalid chat_id %r for Telegram group %s — must be an integer",
+            chat_id, group_name,
+        )
+        return
+
+    try:
+        await _async_call_telegram(
+            hass, chat_id_int, message,
+            parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+        )
+        _LOGGER.debug("Telegram group '%s' (chat_id=%s) sent", group_name, chat_id_int)
     except Exception as exc:  # noqa: BLE001
         _LOGGER.error(
             "Failed to send to Telegram group %s (chat_id=%s): %s",
-            group_name, chat_id, exc,
+            group_name, chat_id_int, exc,
         )
 
 
 # ── Alexa TTS ─────────────────────────────────────────────────────────────────
 
+async def _async_set_volume(hass: HomeAssistant, entity_id: str, volume: float) -> None:
+    """Set a media_player volume (blocking, warning on failure)."""
+    try:
+        await hass.services.async_call(
+            "media_player",
+            "volume_set",
+            {"entity_id": entity_id, "volume_level": volume},
+            blocking=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("Failed to set volume for %s: %s", entity_id, exc)
+
+
 async def _async_send_alexa(
     hass: HomeAssistant, entry: ConfigEntry, message: str, notification_alexa: str
 ) -> None:
-    """Send Alexa TTS with volume save/restore."""
+    """Send Alexa TTS with volume save/restore.
+
+    The whole save→set→TTS→restore cycle is serialised behind a lock so that
+    overlapping notify calls cannot capture the TTS volume as the "original"
+    volume (which would leave the speakers stuck at TTS level).
+    """
     cfg = _get_runtime_config(entry)
     targets = _resolve_alexa_targets(notification_alexa, cfg["alexa_players"])
     if not targets:
@@ -437,75 +536,56 @@ async def _async_send_alexa(
 
     _LOGGER.debug("Alexa targets: %s", targets)
 
-    # 1. Save current volumes
-    original_volumes: dict[str, float] = {}
-    for entity_id in targets:
-        state = hass.states.get(entity_id)
-        if state is None or state.state in ("unavailable", "unknown"):
-            _LOGGER.debug(
-                "Alexa player %s unavailable, using default volume", entity_id
-            )
-            original_volumes[entity_id] = ALEXA_DEFAULT_VOLUME
-        else:
-            vol_attr = state.attributes.get("volume_level", ALEXA_DEFAULT_VOLUME)
-            try:
-                original_volumes[entity_id] = float(vol_attr)
-            except (TypeError, ValueError):
-                original_volumes[entity_id] = ALEXA_DEFAULT_VOLUME
-
-    # Store volumes in input_text entity (comma-separated "entity:vol" pairs)
-    vol_string = ",".join(
-        f"{eid}:{v:.2f}" for eid, v in original_volumes.items()
+    lock: asyncio.Lock = hass.data.setdefault(DOMAIN, {}).setdefault(
+        DATA_ALEXA_LOCK, asyncio.Lock()
     )
-    try:
-        await hass.services.async_call(
-            "input_text",
-            "set_value",
-            {"entity_id": VOLUMES_ENTITY, "value": vol_string},
-            blocking=False,
-        )
-    except Exception as exc:  # noqa: BLE001
-        _LOGGER.warning("Could not store volumes in %s: %s", VOLUMES_ENTITY, exc)
 
-    # 2. Set volume to TTS level
-    alexa_tts_volume = cfg["alexa_tts_volume"]
-    for entity_id in targets:
+    async with lock:
+        # 1. Save current volumes
+        original_volumes: dict[str, float] = {}
+        for entity_id in targets:
+            state = hass.states.get(entity_id)
+            if state is None or state.state in ("unavailable", "unknown"):
+                _LOGGER.debug(
+                    "Alexa player %s unavailable, using default volume", entity_id
+                )
+                original_volumes[entity_id] = ALEXA_DEFAULT_VOLUME
+            else:
+                vol_attr = state.attributes.get("volume_level", ALEXA_DEFAULT_VOLUME)
+                try:
+                    original_volumes[entity_id] = float(vol_attr)
+                except (TypeError, ValueError):
+                    original_volumes[entity_id] = ALEXA_DEFAULT_VOLUME
+
+        # 2. Set volume to TTS level — blocking + awaited BEFORE the TTS is
+        #    sent, so speech can never start at the old volume.
+        alexa_tts_volume = cfg["alexa_tts_volume"]
+        await asyncio.gather(
+            *(_async_set_volume(hass, eid, alexa_tts_volume) for eid in targets)
+        )
+
+        # 3. Send TTS
         try:
             await hass.services.async_call(
-                "media_player",
-                "volume_set",
-                {"entity_id": entity_id, "volume_level": alexa_tts_volume},
-                blocking=False,
+                "notify",
+                "alexa_media",
+                {"message": message, "target": targets, "data": {"type": "tts"}},
+                blocking=True,
             )
+            _LOGGER.debug("Alexa TTS sent to %s", targets)
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Failed to set volume for %s: %s", entity_id, exc)
+            _LOGGER.error("Failed to send Alexa TTS: %s", exc)
 
-    # 3. Send TTS
-    try:
-        await hass.services.async_call(
-            "notify",
-            "alexa_media",
-            {"message": message, "target": targets, "data": {"type": "tts"}},
-            blocking=False,
+        # 4. Wait for speech to finish
+        await asyncio.sleep(cfg["alexa_post_tts_delay"])
+
+        # 5. Restore original volumes
+        await asyncio.gather(
+            *(
+                _async_set_volume(hass, eid, vol_level)
+                for eid, vol_level in original_volumes.items()
+            )
         )
-        _LOGGER.debug("Alexa TTS sent to %s", targets)
-    except Exception as exc:  # noqa: BLE001
-        _LOGGER.error("Failed to send Alexa TTS: %s", exc)
-
-    # 4. Wait for speech to finish
-    await asyncio.sleep(cfg["alexa_post_tts_delay"])
-
-    # 5. Restore original volumes
-    for entity_id, vol_level in original_volumes.items():
-        try:
-            await hass.services.async_call(
-                "media_player",
-                "volume_set",
-                {"entity_id": entity_id, "volume_level": vol_level},
-                blocking=False,
-            )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("Failed to restore volume for %s: %s", entity_id, exc)
 
 
 def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list[str]:
@@ -529,10 +609,26 @@ def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list
     return matched
 
 
+async def _async_send_alexa_en_delayed(
+    hass: HomeAssistant, entry: ConfigEntry, message: str
+) -> None:
+    """Send the English Alexa TTS after its fixed delay.
+
+    Runs as an independent task so the delay starts immediately and is not
+    pushed back by slow channels (e.g. WhatsApp retries when the bridge is
+    down used to delay it by 30+ seconds).
+    """
+    await asyncio.sleep(ALEXA_EN_DELAY)
+    await _async_send_alexa_en(hass, entry, message)
+
+
 async def _async_send_alexa_en(hass: HomeAssistant, entry: ConfigEntry, message: str) -> None:
     """Send English Alexa TTS to the dedicated English Echo."""
     cfg = _get_runtime_config(entry)
     alexa_en_target = cfg["alexa_en_target"]
+    if not alexa_en_target:
+        _LOGGER.warning("English Alexa target not configured — skipping")
+        return
     try:
         await hass.services.async_call(
             "notify",
@@ -542,7 +638,7 @@ async def _async_send_alexa_en(hass: HomeAssistant, entry: ConfigEntry, message:
                 "target": [alexa_en_target],
                 "data": {"type": "tts"},
             },
-            blocking=False,
+            blocking=True,
         )
         _LOGGER.debug("English Alexa TTS sent: %r", message)
     except Exception as exc:  # noqa: BLE001
@@ -558,8 +654,9 @@ async def _async_send_whatsapp(
     notification_whatsapp: str,
     bridge_url: str,
     bridge_token: str,
+    verify_ssl: bool = DEFAULT_VERIFY_SSL,
 ) -> None:
-    """Send WhatsApp messages via whatsmeow-bridge REST API."""
+    """Send WhatsApp messages via whatsmeow-bridge REST API (recipients in parallel)."""
     if not bridge_url:
         _LOGGER.error("WhatsApp bridge URL not configured")
         return
@@ -572,63 +669,80 @@ async def _async_send_whatsapp(
 
     _LOGGER.debug("WhatsApp targets: %s", targets)
 
-    session = async_get_clientsession(hass, verify_ssl=False)
+    session = async_get_bridge_session(hass, verify_ssl)
     headers = {
         "Authorization": f"Bearer {bridge_token}",
         "Content-Type": "application/json",
     }
     url = bridge_url.rstrip("/") + BRIDGE_SEND_ENDPOINT
 
-    for jid in targets:
-        success = False
-        last_error: Exception | None = None
+    results = await asyncio.gather(
+        *(
+            _async_send_whatsapp_to_jid(session, url, headers, jid, message)
+            for jid in targets
+        )
+    )
 
-        for attempt in range(1, BRIDGE_RETRIES + 1):
-            try:
-                async with session.post(
-                    url,
-                    json={"to": jid, "text": message},
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
-                ) as resp:
-                    if resp.status < 300:
-                        _LOGGER.debug("WhatsApp sent to %s (attempt %d)", jid, attempt)
-                        success = True
-                        break
-                    body = await resp.text()
-                    _LOGGER.warning(
-                        "WhatsApp bridge returned %d for %s (attempt %d): %s",
-                        resp.status,
-                        jid,
-                        attempt,
-                        body[:200],
-                    )
-                    last_error = Exception(f"HTTP {resp.status}: {body[:200]}")
-            except Exception as exc:  # noqa: BLE001
+    failed = [jid for jid, ok in zip(targets, results) if not ok]
+    if failed:
+        # Single aggregated alert instead of one per recipient
+        summary = message[:100] + ("…" if len(message) > 100 else "")
+        alert = (
+            f"⚠️ WhatsApp bridge indisponible — message non délivré "
+            f"({len(failed)}/{len(targets)} destinataires): {summary}"
+        )
+        await _async_send_bridge_alert(hass, entry, alert)
+
+
+async def _async_send_whatsapp_to_jid(
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: dict,
+    jid: str,
+    message: str,
+) -> bool:
+    """Send one WhatsApp message with retries. Returns True on success."""
+    last_error: Exception | None = None
+
+    for attempt in range(1, BRIDGE_RETRIES + 1):
+        try:
+            async with session.post(
+                url,
+                json={"to": jid, "text": message},
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
+            ) as resp:
+                if resp.status < 300:
+                    _LOGGER.debug("WhatsApp sent to %s (attempt %d)", jid, attempt)
+                    return True
+                body = await resp.text()
                 _LOGGER.warning(
-                    "WhatsApp bridge error for %s (attempt %d): %s",
+                    "WhatsApp bridge returned %d for %s (attempt %d): %s",
+                    resp.status,
                     jid,
                     attempt,
-                    exc,
+                    body[:200],
                 )
-                last_error = exc
-
-            if attempt < BRIDGE_RETRIES:
-                await asyncio.sleep(2**attempt)  # exponential backoff
-
-        if not success:
-            _LOGGER.error(
-                "WhatsApp delivery failed for %s after %d retries: %s",
+                last_error = Exception(f"HTTP {resp.status}: {body[:200]}")
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning(
+                "WhatsApp bridge error for %s (attempt %d): %s",
                 jid,
-                BRIDGE_RETRIES,
-                last_error,
+                attempt,
+                exc,
             )
-            # Notify René and Nicole via Telegram
-            summary = message[:100] + ("…" if len(message) > 100 else "")
-            alert = (
-                f"⚠️ WhatsApp bridge indisponible — message non délivré: {summary}"
-            )
-            await _async_send_bridge_alert(hass, entry, alert)
+            last_error = exc
+
+        if attempt < BRIDGE_RETRIES:
+            await asyncio.sleep(2**attempt)  # exponential backoff
+
+    _LOGGER.error(
+        "WhatsApp delivery failed for %s after %d retries: %s",
+        jid,
+        BRIDGE_RETRIES,
+        last_error,
+    )
+    return False
 
 
 def _resolve_whatsapp_targets(notification_whatsapp: str, whatsapp_contacts: dict) -> list[str]:
@@ -656,7 +770,7 @@ async def _async_send_bridge_alert(hass: HomeAssistant, entry: ConfigEntry, mess
                 "telegram_bot",
                 "send_message",
                 {"chat_id": chat_id, "message": message},
-                blocking=False,
+                blocking=True,
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.error(

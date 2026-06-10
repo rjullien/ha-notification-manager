@@ -9,6 +9,7 @@ ha_mock = MagicMock()
 ha_mock.core.HomeAssistant = MagicMock
 ha_mock.core.ServiceCall = MagicMock
 ha_mock.config_entries.ConfigEntry = MagicMock
+ha_mock.exceptions.Unauthorized = type("Unauthorized", (Exception,), {})
 ha_mock.helpers.config_validation = MagicMock()
 ha_mock.helpers.config_validation.string = str
 ha_mock.helpers.aiohttp_client.async_get_clientsession = MagicMock()
@@ -17,11 +18,21 @@ ha_mock.helpers.update_coordinator.UpdateFailed = Exception
 ha_mock.helpers.entity_platform.AddEntitiesCallback = MagicMock
 ha_mock.components.sensor.SensorEntity = MagicMock
 ha_mock.components.sensor.SensorEntityDescription = MagicMock
+ha_mock.loader.async_get_integration = AsyncMock()
+
+# aiohttp mock: bridge_http.py subclasses aiohttp.abc.AbstractResolver and
+# imports aiohttp.resolver.DefaultResolver — both need importable stand-ins.
+aiohttp_mock = MagicMock()
+aiohttp_mock.abc.AbstractResolver = type("AbstractResolver", (), {})
+aiohttp_resolver_mock = MagicMock()
+aiohttp_resolver_mock.DefaultResolver = MagicMock
 
 modules_to_mock = {
     "homeassistant": ha_mock,
     "homeassistant.core": ha_mock.core,
     "homeassistant.config_entries": ha_mock.config_entries,
+    "homeassistant.exceptions": ha_mock.exceptions,
+    "homeassistant.loader": ha_mock.loader,
     "homeassistant.helpers": ha_mock.helpers,
     "homeassistant.helpers.config_validation": ha_mock.helpers.config_validation,
     "homeassistant.helpers.aiohttp_client": ha_mock.helpers.aiohttp_client,
@@ -31,7 +42,9 @@ modules_to_mock = {
     "homeassistant.components.sensor": ha_mock.components.sensor,
     "homeassistant.data_entry_flow": MagicMock(),
     "voluptuous": MagicMock(),
-    "aiohttp": MagicMock(),
+    "aiohttp": aiohttp_mock,
+    "aiohttp.abc": aiohttp_mock.abc,
+    "aiohttp.resolver": aiohttp_resolver_mock,
 }
 
 for mod_name, mod_mock in modules_to_mock.items():

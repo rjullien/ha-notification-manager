@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.loader import async_get_integration
 
 from .const import (
     DOMAIN,
@@ -37,13 +38,18 @@ async def async_setup_entry(
     # Store coordinator so __init__ can update it when options change
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator
 
+    # Version from the integration manifest, via HA's loader (already cached —
+    # no manual manifest.json read, no blocking file I/O in the event loop).
+    integration = await async_get_integration(hass, DOMAIN)
+    sw_version = str(integration.version) if integration.version else "unknown"
+
     # Start polling (non-blocking; sensor shows 'unknown' until first successful poll)
     # Do NOT use async_config_entry_first_refresh — if bridge is unreachable
     # it raises ConfigEntryNotReady and prevents the whole integration from loading.
     coordinator.async_set_updated_data(SENSOR_STATE_UNKNOWN)
 
     async_add_entities(
-        [NotificationManagerSensor(coordinator, entry, SENSOR_DESCRIPTION)]
+        [NotificationManagerSensor(coordinator, entry, SENSOR_DESCRIPTION, sw_version)]
     )
 
 
@@ -59,18 +65,18 @@ class NotificationManagerSensor(
         coordinator: NotificationManagerCoordinator,
         entry: ConfigEntry,
         description: SensorEntityDescription,
+        sw_version: str,
     ) -> None:
         """Initialise sensor."""
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        from .const import VERSION
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": "Notification Manager",
             "manufacturer": "rjullien",
             "model": "Notification Manager",
-            "sw_version": VERSION,
+            "sw_version": sw_version,
         }
 
     @property
@@ -80,8 +86,12 @@ class NotificationManagerSensor(
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional attributes."""
+        """Return additional attributes.
+
+        The bridge URL is intentionally NOT exposed here: state attributes are
+        visible to every HA user and persisted by the recorder, which leaked
+        internal infrastructure details (Tailscale hostname / internal IP).
+        """
         return {
-            "bridge_url": self.coordinator.bridge_url,
             "last_update_success": self.coordinator.last_update_success,
         }

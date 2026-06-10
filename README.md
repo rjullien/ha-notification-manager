@@ -21,23 +21,13 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 
 ## Requirements
 
-- Home Assistant **2023.6+**
+- Home Assistant **2024.12+**
 - [Alexa Media Player](https://github.com/custom-components/alexa_media_player) integration (for Alexa TTS)
 - [Telegram Bot](https://www.home-assistant.io/integrations/telegram_bot/) integration (for Telegram)
 - Mobile Companion App installed on target phones
 - [whatsmeow-bridge](https://github.com/tulir/whatsmeow) running and accessible (for WhatsApp)
-- `input_text.media_player_volumes` entity created in HA (for volume persistence)
 
-### Create the input_text entity
-
-Add to your `configuration.yaml`:
-
-```yaml
-input_text:
-  media_player_volumes:
-    name: Media Player Volumes
-    max: 255
-```
+> Since v1.6.0 the `input_text.media_player_volumes` helper is **no longer needed** — volumes are kept in memory during the TTS cycle (the helper was written but never read back, and overflowed its 255-char limit beyond ~8 players).
 
 ---
 
@@ -62,6 +52,7 @@ input_text:
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **Notification Manager**
 3. Enter your whatsmeow-bridge URL and bearer token
+4. **Verify TLS certificate** is enabled by default — disable it only if your bridge uses a self-signed certificate
 
 > **No WhatsApp?** You can enter any placeholder URL — the component works fine for phone/Alexa even if the bridge is down.
 
@@ -154,12 +145,13 @@ Polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
 
 ## Alexa TTS — volume management
 
-1. **Read** current volume from each target entity
-2. **Store** volumes in `input_text.media_player_volumes`
-3. **Set** all targets to TTS volume (default `0.7`)
-4. **Send** TTS via `notify.alexa_media`
-5. **Wait** configurable delay (default `8s`)
-6. **Restore** each player to its saved volume
+1. **Read** current volume from each target entity (kept in memory)
+2. **Set** all targets to TTS volume (default `0.7`) — awaited *before* TTS so speech never starts at the old level
+3. **Send** TTS via `notify.alexa_media`
+4. **Wait** configurable delay (default `8s`)
+5. **Restore** each player to its saved volume
+
+The full cycle is serialised behind a lock: overlapping `notify` calls queue up instead of capturing the TTS volume as the "original" one. The English message (`message_alexa_en`) runs as an independent task with its own 3 s delay — it is never delayed by slow channels (e.g. WhatsApp retries).
 
 ---
 
@@ -182,7 +174,17 @@ Edit `custom_components/notification_manager/const.py` to configure:
 | Service not available | Restart HA; check logs for `notification_manager` |
 | Alexa TTS not working | Verify Alexa Media Player integration + entity IDs in `const.py` |
 | WhatsApp not delivered | Check `sensor.notification_manager_whatsapp_status`; verify bridge URL/token |
-| Volume not restored | Check `input_text.media_player_volumes` value; restore manually if HA restarted mid-TTS |
+| Volume not restored | Restore manually if HA restarted mid-TTS (volumes are held in memory during the cycle) |
+
+---
+
+## Security notes
+
+- **TLS verification is on by default** (v1.6.0). Disable it per-entry in the config flow only for self-signed bridge certificates.
+- The diagnostic services `whatsapp_bridge_logs` and `whatsapp_bridge_restart` are **restricted to administrator users** (bridge logs may contain phone numbers and message contents).
+- The status sensor no longer exposes the bridge URL as a state attribute.
+- Tailscale MagicDNS hostnames are resolved **in-process** via `TAILSCALE_DNS_OVERRIDES` (see `const_private.example.py`) — `/etc/hosts` is never modified.
+- Keep all personal data (names, chat IDs, JIDs) in `/config/notification_manager_private.py`; never commit it.
 
 ---
 

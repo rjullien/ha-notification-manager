@@ -21,7 +21,8 @@
         "description": "Configure the WhatsApp bridge URL and token (whatsmeow-bridge). Leave blank if you don't use WhatsApp.",
         "data": {
           "bridge_url": "WhatsApp bridge URL (optional)",
-          "bridge_token": "Authentication token (optional)"
+          "bridge_token": "Authentication token (optional)",
+          "verify_ssl": "Verify TLS certificate (disable for self-signed certificates)"
         }
       },
       "reconfigure_bridge": {
@@ -29,7 +30,8 @@
         "description": "Update the WhatsApp bridge URL and authentication token.",
         "data": {
           "bridge_url": "WhatsApp bridge URL",
-          "bridge_token": "Authentication token"
+          "bridge_token": "Authentication token",
+          "verify_ssl": "Verify TLS certificate (disable for self-signed certificates)"
         }
       },
       "reconfigure_phone": {
@@ -80,7 +82,8 @@
         "description": "Update the WhatsApp bridge connection. Use Reconfigure (⚙ Configure) for all other settings.",
         "data": {
           "bridge_url": "WhatsApp bridge URL",
-          "bridge_token": "Authentication token"
+          "bridge_token": "Authentication token",
+          "verify_ssl": "Verify TLS certificate (disable for self-signed certificates)"
         }
       }
     }
