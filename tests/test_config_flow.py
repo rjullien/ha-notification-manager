@@ -84,3 +84,76 @@ class TestBridgeValidation:
                     hass, "http://bridge:8080", "bad-token"
                 )
                 assert result == "invalid_auth"
+
+
+class TestBridgeValidationVerifySsl:
+    """verify_ssl propagation and connection errors in bridge validation."""
+
+    def _import(self):
+        with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
+            if "notification_manager.config_flow" in sys.modules:
+                del sys.modules["notification_manager.config_flow"]
+            if "notification_manager.const" in sys.modules:
+                del sys.modules["notification_manager.const"]
+            import notification_manager.config_flow as cf
+        return cf
+
+    def _ok_session(self):
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=None)
+        session = MagicMock()
+        session.get = MagicMock(return_value=mock_resp)
+        return session
+
+    @pytest.mark.asyncio
+    async def test_verify_ssl_false_forwarded(self):
+        cf = self._import()
+        session = self._ok_session()
+        hass = MagicMock()
+
+        with patch.object(cf, "async_get_clientsession", return_value=session) as gs:
+            result = await cf._async_validate_bridge(
+                hass, "http://bridge:8080", "tok", verify_ssl=False
+            )
+
+        assert result is None
+        gs.assert_called_once_with(hass, verify_ssl=False)
+
+    @pytest.mark.asyncio
+    async def test_verify_ssl_defaults_to_true(self):
+        """Without an explicit flag, validation verifies TLS (secure default)."""
+        cf = self._import()
+        session = self._ok_session()
+        hass = MagicMock()
+
+        with patch.object(cf, "async_get_clientsession", return_value=session) as gs:
+            await cf._async_validate_bridge(hass, "http://bridge:8080", "tok")
+
+        gs.assert_called_once_with(hass, verify_ssl=True)
+
+    @pytest.mark.asyncio
+    async def test_connection_error_returns_cannot_connect(self):
+        cf = self._import()
+        import aiohttp as aiohttp_mod  # conftest mock with real exception classes
+        session = MagicMock()
+        session.get = MagicMock(side_effect=aiohttp_mod.ClientConnectorError())
+        hass = MagicMock()
+
+        with patch.object(cf, "async_get_clientsession", return_value=session):
+            result = await cf._async_validate_bridge(hass, "http://bridge:8080", "tok")
+
+        assert result == "cannot_connect"
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_returns_unknown(self):
+        cf = self._import()
+        session = MagicMock()
+        session.get = MagicMock(side_effect=RuntimeError("boom"))
+        hass = MagicMock()
+
+        with patch.object(cf, "async_get_clientsession", return_value=session):
+            result = await cf._async_validate_bridge(hass, "http://bridge:8080", "tok")
+
+        assert result == "unknown"

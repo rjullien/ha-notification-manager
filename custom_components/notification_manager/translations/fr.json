@@ -21,7 +21,8 @@
         "description": "Configurez l'URL et le token du pont WhatsApp (whatsmeow-bridge). Laissez vide si vous n'utilisez pas WhatsApp.",
         "data": {
           "bridge_url": "URL du pont WhatsApp (optionnel)",
-          "bridge_token": "Token d'authentification (optionnel)"
+          "bridge_token": "Token d'authentification (optionnel)",
+          "verify_ssl": "Vérifier le certificat TLS (décocher pour les certificats auto-signés)"
         }
       },
       "reconfigure_bridge": {
@@ -29,7 +30,8 @@
         "description": "Modifiez l'URL et le token d'authentification du pont WhatsApp.",
         "data": {
           "bridge_url": "URL du pont WhatsApp",
-          "bridge_token": "Token d'authentification"
+          "bridge_token": "Token d'authentification",
+          "verify_ssl": "Vérifier le certificat TLS (décocher pour les certificats auto-signés)"
         }
       },
       "reconfigure_phone": {
@@ -80,7 +82,8 @@
         "description": "Modifiez la connexion au pont WhatsApp. Utilisez Reconfigurer (⚙ Configurer) pour tous les autres paramètres.",
         "data": {
           "bridge_url": "URL du pont WhatsApp",
-          "bridge_token": "Token d'authentification"
+          "bridge_token": "Token d'authentification",
+          "verify_ssl": "Vérifier le certificat TLS (décocher pour les certificats auto-signés)"
         }
       }
     }

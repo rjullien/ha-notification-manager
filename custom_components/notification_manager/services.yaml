@@ -30,8 +30,8 @@ notify:
     message_alexa_en:
       name: Message Alexa (anglais)
       description: >
-        Message TTS envoyé à l'Echo anglais (media_player.jullien_s_echo)
-        avec un délai de 3 secondes.
+        Message TTS envoyé à l'Echo anglophone configuré
+        (alexa_en_target), avec un délai de 3 secondes.
       example: "Good night everyone!"
       required: false
       selector:
@@ -41,10 +41,10 @@ notify:
     notification_tel:
       name: Destinataires téléphone
       description: >
-        Destinataires des notifications push et Telegram.
-        Valeurs possibles : Rene, Nicole, Camille, Marie (séparés par espace).
-        Défaut = all (Rene + Nicole). Désactiver = aucun ou none.
-      example: "Rene Nicole"
+        Destinataires des notifications push et Telegram : noms définis
+        dans votre configuration (phone_targets), séparés par des espaces.
+        Défaut = all (= phone_default_targets). Désactiver = aucun ou none.
+      example: "alice bob"
       required: false
       default: "all"
       selector:
@@ -53,10 +53,10 @@ notify:
     notification_whatsapp:
       name: Destinataires WhatsApp
       description: >
-        Destinataires WhatsApp via whatsmeow-bridge.
-        Valeurs possibles : Rene, Nicole, Camille, Nadia, Claire, Jihane, Tristan
-        (séparés par espace). Défaut = none (désactivé).
-      example: "Rene Nicole"
+        Destinataires WhatsApp via whatsmeow-bridge : noms définis dans
+        votre configuration (whatsapp_contacts), séparés par des espaces.
+        Défaut = none (désactivé).
+      example: "alice bob"
       required: false
       default: "none"
       selector:
@@ -66,11 +66,10 @@ notify:
       name: Enceintes Alexa
       description: >
         Enceintes Alexa cibles pour le TTS. Chaque mot-clé est matché
-        par sous-chaîne dans l'entity_id.
-        Mots-clés : player, echo, show_2, chambre, spot, jardin, sdb,
-        marguerite, rene, dot_2 (séparés par espace).
-        Défaut (vide) = show. Désactiver = aucun.
-      example: "show_2 chambre"
+        par sous-chaîne dans l'entity_id des players configurés
+        (alexa_players). Défaut (vide) = mot-clé "show".
+        Désactiver = aucun ou none.
+      example: "show salon"
       required: false
       default: ""
       selector:
@@ -81,7 +80,7 @@ notify:
       description: >
         Nom du groupe Telegram cible (défini dans la configuration).
         Le message sera envoyé au groupe au lieu des DMs individuels.
-      example: "rene_nicole"
+      example: "family"
       required: false
       default: ""
       selector:
@@ -92,7 +91,7 @@ notify:
       description: >
         Chemin local vers une image à envoyer via Telegram (send_photo).
         Compatible avec les DMs individuels et les groupes.
-      example: "/config/www/snapshots/piscine.jpg"
+      example: "/config/www/snapshots/camera.jpg"
       required: false
       default: ""
       selector:
@@ -129,7 +128,10 @@ notify:
 
 whatsapp_bridge_logs:
   name: "WhatsApp Bridge Logs"
-  description: "Fetch recent logs from the WhatsApp bridge (response-only, no state stored)"
+  description: >
+    Fetch recent logs from the WhatsApp bridge (response-only, no state
+    stored). Restricted to administrator users — logs may contain phone
+    numbers and message contents.
   fields:
     limit:
       name: "Limit"
@@ -157,4 +159,6 @@ whatsapp_bridge_logs:
 
 whatsapp_bridge_restart:
   name: "WhatsApp Bridge Restart"
-  description: "Trigger a soft restart of the WhatsApp bridge (disconnect + reconnect)"
+  description: >
+    Trigger a soft restart of the WhatsApp bridge (disconnect + reconnect).
+    Restricted to administrator users.
