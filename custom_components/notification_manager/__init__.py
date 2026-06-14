@@ -528,6 +528,11 @@ async def _async_send_alexa(
     overlapping notify calls cannot capture the TTS volume as the "original"
     volume (which would leave the speakers stuck at TTS level).
     """
+    # Skip if alexa_media integration is not available on this instance
+    if not hass.services.has_service("notify", "alexa_media"):
+        _LOGGER.debug("Alexa TTS skipped: notify.alexa_media service not available")
+        return
+
     cfg = _get_runtime_config(entry)
     targets = _resolve_alexa_targets(notification_alexa, cfg["alexa_players"])
     if not targets:
@@ -624,6 +629,11 @@ async def _async_send_alexa_en_delayed(
 
 async def _async_send_alexa_en(hass: HomeAssistant, entry: ConfigEntry, message: str) -> None:
     """Send English Alexa TTS to the dedicated English Echo."""
+    # Skip if alexa_media integration is not available on this instance
+    if not hass.services.has_service("notify", "alexa_media"):
+        _LOGGER.debug("Alexa EN TTS skipped: notify.alexa_media service not available")
+        return
+
     cfg = _get_runtime_config(entry)
     alexa_en_target = cfg["alexa_en_target"]
     if not alexa_en_target:
