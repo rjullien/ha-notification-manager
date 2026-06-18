@@ -19,6 +19,7 @@ from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers import config_validation as cv
 
 from .bridge_http import async_close_bridge_sessions, async_get_bridge_session
+from .watchdog import async_setup_watchdog, EntityWatchdog
 from .const import (
     ALEXA_DEFAULT_KEYWORD,
     ALEXA_DEFAULT_VOLUME,
@@ -212,14 +213,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         supports_response=SupportsResponse.ONLY,
     )
 
+    # Start entity watchdog
+    watchdog = async_setup_watchdog(hass, entry)
+    hass.data[DOMAIN][entry.entry_id]["watchdog"] = watchdog
+
     _LOGGER.info("Notification Manager integration loaded (entry %s)", entry.entry_id)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    # Shutdown coordinator (cancel polling)
+    # Stop entity watchdog
     entry_data = hass.data.get(DOMAIN, {}).get(entry.entry_id, {})
+    watchdog = entry_data.get("watchdog") if isinstance(entry_data, dict) else None
+    if watchdog and isinstance(watchdog, EntityWatchdog):
+        watchdog.stop()
+
+    # Shutdown coordinator (cancel polling)
     coordinator = entry_data.get("coordinator") if isinstance(entry_data, dict) else None
     if coordinator:
         await coordinator.async_shutdown()
