@@ -69,6 +69,23 @@ TAILSCALE_DNS_OVERRIDES: dict[str, str] = {}
 # Dict of {name: chat_id} for Telegram group targets
 TELEGRAM_GROUPS: dict = {}
 
+# ── Entity Watchdog (override in const_private.py) ───────────────────────────
+
+# List of entity_ids to monitor for unavailable state
+WATCHDOG_ENTITIES: list[str] = []
+
+# Minutes an entity must be unavailable before alerting
+WATCHDOG_THRESHOLD_MINUTES = 15
+
+# How often to check (minutes)
+WATCHDOG_CHECK_INTERVAL_MINUTES = 5
+
+# Hours between repeated alerts for the same entity
+WATCHDOG_COOLDOWN_HOURS = 6
+
+# Telegram chat_ids to receive watchdog alerts (falls back to BRIDGE_ALERT_CHAT_IDS if empty)
+WATCHDOG_TELEGRAM_CHAT_IDS: list[int] = []
+
 # ── Sensor ────────────────────────────────────────────────────────────────────
 
 SENSOR_POLL_INTERVAL_MINUTES = 5
