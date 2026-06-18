@@ -78,7 +78,7 @@ WATCHDOG_ENTITIES: list[str] = []
 WATCHDOG_THRESHOLD_MINUTES = 15
 
 # How often to check (minutes)
-WATCHDOG_CHECK_INTERVAL_MINUTES = 5
+WATCHDOG_CHECK_INTERVAL_MINUTES = 60
 
 # Hours between repeated alerts for the same entity
 WATCHDOG_COOLDOWN_HOURS = 6
