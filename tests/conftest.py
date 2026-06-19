@@ -19,6 +19,8 @@ ha_mock.helpers.aiohttp_client.async_get_clientsession = MagicMock()
 ha_mock.helpers.update_coordinator.DataUpdateCoordinator = MagicMock
 ha_mock.helpers.update_coordinator.UpdateFailed = Exception
 ha_mock.helpers.entity_platform.AddEntitiesCallback = MagicMock
+ha_mock.helpers.event = MagicMock()
+ha_mock.helpers.event.async_track_time_interval = MagicMock()
 ha_mock.components.sensor.SensorEntity = MagicMock
 ha_mock.components.sensor.SensorEntityDescription = MagicMock
 ha_mock.loader.async_get_integration = AsyncMock()
@@ -46,6 +48,7 @@ modules_to_mock = {
     "homeassistant.helpers.aiohttp_client": ha_mock.helpers.aiohttp_client,
     "homeassistant.helpers.update_coordinator": ha_mock.helpers.update_coordinator,
     "homeassistant.helpers.entity_platform": ha_mock.helpers.entity_platform,
+    "homeassistant.helpers.event": ha_mock.helpers.event,
     "homeassistant.components": ha_mock.components,
     "homeassistant.components.sensor": ha_mock.components.sensor,
     "homeassistant.data_entry_flow": MagicMock(),
