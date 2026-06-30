@@ -3,6 +3,11 @@
 Periodically checks a list of monitored entities. If any entity remains
 'unavailable' for longer than the configured threshold, sends a Telegram
 notification to the admin.
+
+Supports two tiers:
+- WATCHDOG_ENTITIES: standard check (default every 60 min, threshold 15 min)
+- WATCHDOG_CRITICAL_ENTITIES: fast check (default every 5 min, threshold 5 min)
+  Use for irrigation valves and other time-sensitive devices.
 """
 from __future__ import annotations
 
@@ -18,6 +23,9 @@ from .const import (
     BRIDGE_ALERT_CHAT_IDS,
     DOMAIN,
     WATCHDOG_CHECK_INTERVAL_MINUTES,
+    WATCHDOG_CRITICAL_ENTITIES,
+    WATCHDOG_CRITICAL_INTERVAL_MINUTES,
+    WATCHDOG_CRITICAL_THRESHOLD_MINUTES,
     WATCHDOG_ENTITIES,
     WATCHDOG_THRESHOLD_MINUTES,
     WATCHDOG_COOLDOWN_HOURS,
@@ -40,42 +48,85 @@ class EntityWatchdog:
         self._unavailable_since: dict[str, datetime] = {}
         # Track last alert time per entity (cooldown)
         self._last_alerted: dict[str, datetime] = {}
-        self._unsub: Any = None
+        self._unsub_standard: Any = None
+        self._unsub_critical: Any = None
 
     def start(self) -> None:
         """Start periodic checking."""
-        self._unsub = async_track_time_interval(
-            self._hass,
-            self._async_check,
-            timedelta(minutes=WATCHDOG_CHECK_INTERVAL_MINUTES),
-        )
-        _LOGGER.debug(
-            "Entity watchdog started — monitoring %d entities, "
-            "threshold %d min, interval %d min",
-            len(WATCHDOG_ENTITIES),
-            WATCHDOG_THRESHOLD_MINUTES,
-            WATCHDOG_CHECK_INTERVAL_MINUTES,
-        )
+        if WATCHDOG_ENTITIES:
+            self._unsub_standard = async_track_time_interval(
+                self._hass,
+                self._async_check_standard,
+                timedelta(minutes=WATCHDOG_CHECK_INTERVAL_MINUTES),
+            )
+            _LOGGER.debug(
+                "Entity watchdog started — monitoring %d standard entities, "
+                "threshold %d min, interval %d min",
+                len(WATCHDOG_ENTITIES),
+                WATCHDOG_THRESHOLD_MINUTES,
+                WATCHDOG_CHECK_INTERVAL_MINUTES,
+            )
+
+        if WATCHDOG_CRITICAL_ENTITIES:
+            self._unsub_critical = async_track_time_interval(
+                self._hass,
+                self._async_check_critical,
+                timedelta(minutes=WATCHDOG_CRITICAL_INTERVAL_MINUTES),
+            )
+            _LOGGER.debug(
+                "Critical watchdog started — monitoring %d critical entities, "
+                "threshold %d min, interval %d min",
+                len(WATCHDOG_CRITICAL_ENTITIES),
+                WATCHDOG_CRITICAL_THRESHOLD_MINUTES,
+                WATCHDOG_CRITICAL_INTERVAL_MINUTES,
+            )
+
+        if not WATCHDOG_ENTITIES and not WATCHDOG_CRITICAL_ENTITIES:
+            _LOGGER.debug("Entity watchdog: no entities configured, skipping")
 
     def stop(self) -> None:
         """Stop periodic checking."""
-        if self._unsub:
-            self._unsub()
-            self._unsub = None
-            _LOGGER.debug("Entity watchdog stopped")
+        if self._unsub_standard:
+            self._unsub_standard()
+            self._unsub_standard = None
+        if self._unsub_critical:
+            self._unsub_critical()
+            self._unsub_critical = None
+        _LOGGER.debug("Entity watchdog stopped")
 
     @callback
-    async def _async_check(self, _now: datetime | None = None) -> None:
-        """Check all monitored entities."""
-        if not WATCHDOG_ENTITIES:
+    async def _async_check_standard(self, _now: datetime | None = None) -> None:
+        """Check standard monitored entities."""
+        await self._async_check_entities(
+            WATCHDOG_ENTITIES,
+            timedelta(minutes=WATCHDOG_THRESHOLD_MINUTES),
+            "standard",
+        )
+
+    @callback
+    async def _async_check_critical(self, _now: datetime | None = None) -> None:
+        """Check critical monitored entities (faster interval, shorter threshold)."""
+        await self._async_check_entities(
+            WATCHDOG_CRITICAL_ENTITIES,
+            timedelta(minutes=WATCHDOG_CRITICAL_THRESHOLD_MINUTES),
+            "critical",
+        )
+
+    async def _async_check_entities(
+        self,
+        entities: list[str],
+        threshold: timedelta,
+        tier: str,
+    ) -> None:
+        """Check a list of entities against the given threshold."""
+        if not entities:
             return
 
         now = datetime.now(timezone.utc)
-        threshold = timedelta(minutes=WATCHDOG_THRESHOLD_MINUTES)
         cooldown = timedelta(hours=WATCHDOG_COOLDOWN_HOURS)
         alerts: list[str] = []
 
-        for entity_id in WATCHDOG_ENTITIES:
+        for entity_id in entities:
             state = self._hass.states.get(entity_id)
 
             if state is None or state.state in ("unavailable", "unknown"):
@@ -83,7 +134,8 @@ class EntityWatchdog:
                 if entity_id not in self._unavailable_since:
                     self._unavailable_since[entity_id] = now
                     _LOGGER.debug(
-                        "Watchdog: %s became unavailable at %s", entity_id, now
+                        "Watchdog [%s]: %s became unavailable at %s",
+                        tier, entity_id, now,
                     )
 
                 elapsed = now - self._unavailable_since[entity_id]
@@ -97,21 +149,27 @@ class EntityWatchdog:
                             else entity_id
                         )
                         minutes = int(elapsed.total_seconds() // 60)
+                        emoji = "🚨" if tier == "critical" else "⚠️"
                         alerts.append(
-                            f"• {friendly} (`{entity_id}`) — unavailable depuis {minutes} min"
+                            f"• {emoji} {friendly} (`{entity_id}`) — unavailable depuis {minutes} min"
                         )
                         self._last_alerted[entity_id] = now
             else:
                 # Entity is back — clear tracking
                 if entity_id in self._unavailable_since:
-                    _LOGGER.debug("Watchdog: %s recovered", entity_id)
+                    _LOGGER.debug("Watchdog [%s]: %s recovered", tier, entity_id)
                     del self._unavailable_since[entity_id]
                     # Reset cooldown on recovery so next unavailable is alerted promptly
                     self._last_alerted.pop(entity_id, None)
 
         if alerts:
+            header = (
+                "🚨 *Watchdog CRITIQUE — Arrosage/Irrigation*"
+                if tier == "critical"
+                else "⚠️ *Entity Watchdog — Entités unavailable*"
+            )
             message = (
-                "⚠️ *Entity Watchdog — Entités unavailable*\n\n"
+                f"{header}\n\n"
                 + "\n".join(alerts)
                 + "\n\n_Vérifier l'intégration ou l'appareil._"
             )

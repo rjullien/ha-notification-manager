@@ -74,11 +74,21 @@ TELEGRAM_GROUPS: dict = {}
 # List of entity_ids to monitor for unavailable state
 WATCHDOG_ENTITIES: list[str] = []
 
+# Critical entities checked more frequently (e.g. irrigation valves)
+# These are checked every WATCHDOG_CRITICAL_INTERVAL_MINUTES with a shorter threshold.
+WATCHDOG_CRITICAL_ENTITIES: list[str] = []
+
 # Minutes an entity must be unavailable before alerting
 WATCHDOG_THRESHOLD_MINUTES = 15
 
+# Threshold for critical entities (minutes)
+WATCHDOG_CRITICAL_THRESHOLD_MINUTES = 5
+
 # How often to check (minutes)
 WATCHDOG_CHECK_INTERVAL_MINUTES = 60
+
+# How often to check critical entities (minutes)
+WATCHDOG_CRITICAL_INTERVAL_MINUTES = 10
 
 # Hours between repeated alerts for the same entity
 WATCHDOG_COOLDOWN_HOURS = 6
