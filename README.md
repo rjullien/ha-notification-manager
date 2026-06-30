@@ -167,6 +167,60 @@ Edit `custom_components/notification_manager/const.py` to configure:
 
 ---
 
+## Entity Unavailable Watchdog
+
+Since **v1.7.0**, Notification Manager includes a built-in watchdog that monitors entities and sends **Telegram alerts** when they stay `unavailable` too long.
+
+### Two tiers
+
+| Tier | Interval | Threshold | Use case |
+|------|----------|-----------|----------|
+| **Standard** | 60 min | 15 min | Alexa players, sensors, switches |
+| **Critical** | 10 min | 5 min | Irrigation valves, safety devices |
+
+The critical tier (v1.7.1) is designed for time-sensitive devices where a few minutes of undetected downtime can cause damage (e.g., irrigation valve stuck open).
+
+### Configuration
+
+Add to `/config/notification_manager_private.py`:
+
+```python
+# Standard tier — checked every 60 min, alert after 15 min unavailable
+WATCHDOG_ENTITIES = [
+    "media_player.rene_echo_show",
+    "media_player.kitchen_echo",
+]
+
+# Critical tier — checked every 10 min, alert after 5 min unavailable
+WATCHDOG_CRITICAL_ENTITIES = [
+    "valve.irrigation_valve_1",
+    "valve.irrigation_valve_2",
+]
+
+# Telegram targets for alerts
+WATCHDOG_TELEGRAM_CHAT_IDS = [123456789]
+```
+
+### Behavior
+
+- **Opt-in**: if no private file exists or lists are empty, the watchdog does nothing (zero overhead)
+- **Cooldown**: 6 hours between repeated alerts for the same entity
+- **Auto-recovery**: logs when an entity comes back online
+- **Private file location**: `/config/notification_manager_private.py` (survives HACS updates)
+- Only `UPPERCASE` names are imported from the private file
+
+### Tuning (optional overrides in private file)
+
+```python
+WATCHDOG_CHECK_INTERVAL_MINUTES = 60       # Standard tier interval
+WATCHDOG_THRESHOLD_MINUTES = 15            # Standard tier threshold
+WATCHDOG_CRITICAL_INTERVAL_MINUTES = 10    # Critical tier interval
+WATCHDOG_CRITICAL_THRESHOLD_MINUTES = 5    # Critical tier threshold
+WATCHDOG_COOLDOWN_HOURS = 6                # Hours between re-alerts
+```
+
+---
+
 ## Troubleshooting
 
 | Issue | Fix |
