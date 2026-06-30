@@ -1,13 +1,18 @@
 {
-  "codeowners": ["@rjullien"],
+  "codeowners": [
+    "@rjullien"
+  ],
   "config_flow": true,
   "dependencies": [],
-  "after_dependencies": ["telegram_bot", "alexa_media"],
+  "after_dependencies": [
+    "telegram_bot",
+    "alexa_media"
+  ],
   "documentation": "https://github.com/rjullien/ha-notification-manager",
   "domain": "notification_manager",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/rjullien/ha-notification-manager/issues",
   "name": "Notification Manager",
   "requirements": [],
-  "version": "1.7.0"
+  "version": "1.7.1"
 }
