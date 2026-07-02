@@ -549,6 +549,18 @@ async def _async_send_alexa(
         _LOGGER.debug("No Alexa targets resolved for %r", notification_alexa)
         return
 
+    # Filter out unavailable players (e.g. stale _2 duplicates from re-added integrations)
+    available_targets = [
+        t for t in targets
+        if (state := hass.states.get(t)) is not None and state.state != "unavailable"
+    ]
+    if not available_targets:
+        _LOGGER.warning(
+            "All resolved Alexa targets are unavailable: %s (skipping TTS)", targets
+        )
+        return
+    targets = available_targets
+
     _LOGGER.debug("Alexa targets: %s", targets)
 
     lock: asyncio.Lock = hass.data.setdefault(DOMAIN, {}).setdefault(
