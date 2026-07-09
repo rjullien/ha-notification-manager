@@ -67,7 +67,7 @@ class TestAlexaVolumeCycle:
         assert all(blocking for *_, blocking in log)
 
     async def test_unavailable_player_uses_default_volume(self):
-        """Unavailable player → restore falls back to ALEXA_DEFAULT_VOLUME."""
+        """Unavailable player → TTS skipped entirely (no volume to restore)."""
         log: list = []
         hass = _make_hass(log)
         hass.states.get = MagicMock(return_value=None)
@@ -75,8 +75,8 @@ class TestAlexaVolumeCycle:
 
         await _async_send_alexa(hass, entry, "Bonjour", "show")
 
-        restore = log[-1]
-        assert restore[2]["volume_level"] == ALEXA_DEFAULT_VOLUME
+        # All targets unavailable → no TTS sent, no volume cycle
+        assert log == []
 
     async def test_invalid_volume_attribute_uses_default(self):
         """Non-numeric volume_level attribute → default volume."""
