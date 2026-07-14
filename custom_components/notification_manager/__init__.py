@@ -22,6 +22,7 @@ from .bridge_http import async_close_bridge_sessions, async_get_bridge_session
 from .watchdog import async_setup_watchdog, EntityWatchdog
 from .const import (
     ALEXA_DEFAULT_KEYWORD,
+    ALEXA_KEYWORD_ALIASES,
     ALEXA_DEFAULT_VOLUME,
     ALEXA_EN_DELAY,
     ALEXA_EN_TARGET as _CONST_ALEXA_EN_TARGET,
@@ -646,7 +647,11 @@ def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list
     if value in ("aucun", "none", "off", "disable"):
         return []
 
-    keywords = [k.strip() for k in value.split() if k.strip()]
+    keywords = [
+        ALEXA_KEYWORD_ALIASES.get(k.strip(), k.strip())
+        for k in value.split()
+        if k.strip()
+    ]
     matched: list[str] = []
     for keyword in keywords:
         for player in alexa_players:

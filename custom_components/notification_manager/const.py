@@ -20,6 +20,12 @@ ALEXA_PLAYERS: list[str] = []
 # Default keyword when notification_alexa is empty (matches show entities)
 ALEXA_DEFAULT_KEYWORD = "show"
 
+# Legacy keyword aliases (notification_alexa value → resolved keyword).
+# show_2 matched rene_echo_show_2 which is often unavailable (duplicate alexa_media import).
+ALEXA_KEYWORD_ALIASES: dict[str, str] = {
+    "show_2": "rene_show",
+}
+
 # Alexa TTS volume
 ALEXA_TTS_VOLUME = 0.7
 
