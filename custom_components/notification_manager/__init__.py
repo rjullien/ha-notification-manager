@@ -546,7 +546,12 @@ async def _async_send_alexa(
     cfg = _get_runtime_config(entry)
     targets = _resolve_alexa_targets(notification_alexa, cfg["alexa_players"])
     if not targets:
-        _LOGGER.debug("No Alexa targets resolved for %r", notification_alexa)
+        _LOGGER.warning(
+            "No Alexa targets resolved for notification_alexa=%r — TTS skipped. "
+            "Keywords must match entity_ids (compound keywords like rene_show "
+            "require each part, e.g. rene + show, to appear in the entity_id).",
+            notification_alexa,
+        )
         return
 
     # Filter out unavailable players (e.g. stale _2 duplicates from re-added integrations)
@@ -615,6 +620,20 @@ async def _async_send_alexa(
         )
 
 
+def _keyword_matches_alexa_player(keyword: str, player: str) -> bool:
+    """Match a keyword against a player entity_id.
+
+    Simple keywords use substring match (legacy mamagetts behaviour).
+    Compound keywords with spaces or underscores (e.g. ``rene_show``) require
+    every part to appear in the entity_id — so ``rene_show`` matches
+    ``rene_echo_show`` but not ``rene_echo_spot``.
+    """
+    parts = [p for p in keyword.replace("_", " ").split() if p]
+    if len(parts) > 1:
+        return all(part in player for part in parts)
+    return keyword in player
+
+
 def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list[str]:
     """Resolve notification_alexa string to list of entity_ids."""
     value = notification_alexa.strip().lower()
@@ -631,7 +650,7 @@ def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list
     matched: list[str] = []
     for keyword in keywords:
         for player in alexa_players:
-            if keyword in player and player not in matched:
+            if _keyword_matches_alexa_player(keyword, player) and player not in matched:
                 matched.append(player)
     return matched
 
