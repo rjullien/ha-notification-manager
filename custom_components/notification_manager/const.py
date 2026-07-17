@@ -6,8 +6,8 @@ CONF_BRIDGE_TOKEN = "bridge_token"
 CONF_VERIFY_SSL = "verify_ssl"
 
 # Default values
-DEFAULT_BRIDGE_URL = ""
-DEFAULT_BRIDGE_TOKEN = ""
+DEFAULT_BRIDGE_URL = "https://gowa.tail4c7c90.ts.net"
+DEFAULT_BRIDGE_TOKEN = ""  # GoWA: no auth needed (Tailscale-secured)
 # Secure by default — disable explicitly in the config flow for
 # self-signed certificates on the bridge.
 DEFAULT_VERIFY_SSL = True
@@ -19,6 +19,12 @@ ALEXA_PLAYERS: list[str] = []
 
 # Default keyword when notification_alexa is empty (matches show entities)
 ALEXA_DEFAULT_KEYWORD = "show"
+
+# Legacy keyword aliases (notification_alexa value → resolved keyword).
+# show_2 matched rene_echo_show_2 which is often unavailable (duplicate alexa_media import).
+ALEXA_KEYWORD_ALIASES: dict[str, str] = {
+    "show_2": "rene_show",
+}
 
 # Alexa TTS volume
 ALEXA_TTS_VOLUME = 0.7
@@ -49,10 +55,8 @@ PHONE_DEFAULT_TARGETS: list[str] = []
 WHATSAPP_CONTACTS: dict = {}
 
 # WhatsApp bridge endpoints
-BRIDGE_SEND_ENDPOINT = "/send"
-BRIDGE_HEALTH_ENDPOINT = "/health"
-
-# HTTP timeouts (seconds)
+BRIDGE_SEND_ENDPOINT = "/send/message"
+BRIDGE_HEALTH_ENDPOINT = "/app/status"
 BRIDGE_TIMEOUT = 10
 BRIDGE_RETRIES = 3
 
