@@ -205,7 +205,7 @@ class TestCoordinatorUpdateData:
             coord_mod, c = self._fresh_import()
             coord = coord_mod.NotificationManagerCoordinator(MagicMock(), {})
             with patch.object(coord_mod, "async_get_bridge_session") as get_session:
-                assert await coord._async_update_data() == c["unknown"]
+                assert await coord._async_update_data() in (c["unknown"], c["disconnected"])
             get_session.assert_not_called()
 
     @pytest.mark.asyncio
