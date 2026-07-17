@@ -22,6 +22,7 @@ from .bridge_http import async_close_bridge_sessions, async_get_bridge_session
 from .watchdog import async_setup_watchdog, EntityWatchdog
 from .const import (
     ALEXA_DEFAULT_KEYWORD,
+    ALEXA_KEYWORD_ALIASES,
     ALEXA_DEFAULT_VOLUME,
     ALEXA_EN_DELAY,
     ALEXA_EN_TARGET as _CONST_ALEXA_EN_TARGET,
@@ -546,7 +547,12 @@ async def _async_send_alexa(
     cfg = _get_runtime_config(entry)
     targets = _resolve_alexa_targets(notification_alexa, cfg["alexa_players"])
     if not targets:
-        _LOGGER.debug("No Alexa targets resolved for %r", notification_alexa)
+        _LOGGER.warning(
+            "No Alexa targets resolved for notification_alexa=%r — TTS skipped. "
+            "Keywords must match entity_ids (compound keywords like rene_show "
+            "require each part, e.g. rene + show, to appear in the entity_id).",
+            notification_alexa,
+        )
         return
 
     # Filter out unavailable players (e.g. stale _2 duplicates from re-added integrations)
@@ -615,6 +621,20 @@ async def _async_send_alexa(
         )
 
 
+def _keyword_matches_alexa_player(keyword: str, player: str) -> bool:
+    """Match a keyword against a player entity_id.
+
+    Simple keywords use substring match (legacy mamagetts behaviour).
+    Compound keywords with spaces or underscores (e.g. ``rene_show``) require
+    every part to appear in the entity_id — so ``rene_show`` matches
+    ``rene_echo_show`` but not ``rene_echo_spot``.
+    """
+    parts = [p for p in keyword.replace("_", " ").split() if p]
+    if len(parts) > 1:
+        return all(part in player for part in parts)
+    return keyword in player
+
+
 def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list[str]:
     """Resolve notification_alexa string to list of entity_ids."""
     value = notification_alexa.strip().lower()
@@ -627,11 +647,15 @@ def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list
     if value in ("aucun", "none", "off", "disable"):
         return []
 
-    keywords = [k.strip() for k in value.split() if k.strip()]
+    keywords = [
+        ALEXA_KEYWORD_ALIASES.get(k.strip(), k.strip())
+        for k in value.split()
+        if k.strip()
+    ]
     matched: list[str] = []
     for keyword in keywords:
         for player in alexa_players:
-            if keyword in player and player not in matched:
+            if _keyword_matches_alexa_player(keyword, player) and player not in matched:
                 matched.append(player)
     return matched
 
@@ -703,7 +727,6 @@ async def _async_send_whatsapp(
 
     session = async_get_bridge_session(hass, verify_ssl)
     headers = {
-        "Authorization": f"Bearer {bridge_token}",
         "Content-Type": "application/json",
     }
     url = bridge_url.rstrip("/") + BRIDGE_SEND_ENDPOINT
@@ -735,12 +758,14 @@ async def _async_send_whatsapp_to_jid(
 ) -> bool:
     """Send one WhatsApp message with retries. Returns True on success."""
     last_error: Exception | None = None
+    # Convert JID to phone number for GoWA bridge
+    phone = jid.replace("@s.whatsapp.net", "") if "@s.whatsapp.net" in jid else jid
 
     for attempt in range(1, BRIDGE_RETRIES + 1):
         try:
             async with session.post(
                 url,
-                json={"to": jid, "text": message},
+                json={"phone": phone, "message": message},
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
             ) as resp:
