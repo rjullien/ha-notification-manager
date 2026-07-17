@@ -74,7 +74,7 @@ class TestSendToJid:
         )
 
         kwargs = session.post.call_args.kwargs
-        assert kwargs["json"] == {"to": "j@s", "text": "coucou"}
+        assert kwargs["json"] == {"phone": "j@s", "message": "coucou"}
         assert kwargs["headers"]["Authorization"] == "Bearer t"
 
 
