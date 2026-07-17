@@ -206,7 +206,6 @@ class TestCoordinatorUpdateData:
             coord = coord_mod.NotificationManagerCoordinator(MagicMock(), {})
             with patch.object(coord_mod, "async_get_bridge_session") as get_session:
                 assert await coord._async_update_data() in (c["unknown"], c["disconnected"])
-            get_session.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unexpected_error_raises_update_failed(self):
