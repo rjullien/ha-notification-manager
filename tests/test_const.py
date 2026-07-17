@@ -56,5 +56,5 @@ class TestConstDefaults:
             if "notification_manager.const" in sys.modules:
                 del sys.modules["notification_manager.const"]
             from notification_manager.const import BRIDGE_SEND_ENDPOINT, BRIDGE_HEALTH_ENDPOINT
-            assert BRIDGE_SEND_ENDPOINT == "/send"
-            assert BRIDGE_HEALTH_ENDPOINT == "/health"
+            assert BRIDGE_SEND_ENDPOINT == "/send/message"
+            assert BRIDGE_HEALTH_ENDPOINT == "/app/status"
