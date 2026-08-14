@@ -19,6 +19,7 @@ from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers import config_validation as cv
 
 from .bridge_http import async_close_bridge_sessions, async_get_bridge_session
+from .telegram_text import PARSE_MODE_PLAIN
 from .watchdog import async_setup_watchdog, EntityWatchdog
 from .const import (
     ALEXA_DEFAULT_KEYWORD,
@@ -448,7 +449,18 @@ async def _async_call_telegram(
     hass: HomeAssistant, chat_id: int, message: str,
     parse_mode: str = "", photo_path: str = "", photo_url: str = "",
 ) -> None:
-    """Call telegram_bot.send_photo / send_message (blocking, errors raise)."""
+    """Call telegram_bot.send_photo / send_message (blocking, errors raise).
+
+    ``parse_mode`` is *always* sent. Leaving the key out does not give plain
+    text: telegram_bot falls back to its platform default, which is markdown
+    (see telegram_text module docstring), so a message holding an unbalanced
+    "_" or "*" — entity_ids, snake_case labels, file names — is rejected by
+    Telegram with "Can't parse entities" and the notification is lost.
+    An empty ``parse_mode`` therefore resolves to PARSE_MODE_PLAIN, matching
+    what services.yaml already advertises ("Aucun (texte brut)" as default).
+    """
+    effective_parse_mode = parse_mode or PARSE_MODE_PLAIN
+
     if photo_path or photo_url:
         photo_data: dict = {"chat_id": chat_id}
         if photo_path:
@@ -457,15 +469,16 @@ async def _async_call_telegram(
             photo_data["url"] = photo_url
         if message:
             photo_data["caption"] = message
-        if parse_mode:
-            photo_data["parse_mode"] = parse_mode
+        photo_data["parse_mode"] = effective_parse_mode
         await hass.services.async_call(
             "telegram_bot", "send_photo", photo_data, blocking=True,
         )
     else:
-        msg_data: dict = {"chat_id": chat_id, "message": message}
-        if parse_mode:
-            msg_data["parse_mode"] = parse_mode
+        msg_data: dict = {
+            "chat_id": chat_id,
+            "message": message,
+            "parse_mode": effective_parse_mode,
+        }
         await hass.services.async_call(
             "telegram_bot", "send_message", msg_data, blocking=True,
         )

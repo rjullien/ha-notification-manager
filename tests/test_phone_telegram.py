@@ -45,8 +45,11 @@ class TestSendPhone:
         await nm._async_send_phone(hass, entry, "hello", "all")
 
         assert ("notify", "mobile_app_alice", {"message": "hello"}, True) in log
+        # parse_mode is always explicit: omitting it would let telegram_bot
+        # apply its markdown default. See TestParseModeAlwaysExplicit.
         assert ("telegram_bot", "send_message",
-                {"chat_id": 111, "message": "hello"}, True) in log
+                {"chat_id": 111, "message": "hello",
+                 "parse_mode": "plain_text"}, True) in log
 
     async def test_no_telegram_chat_id_push_only(self):
         log: list = []
@@ -113,7 +116,10 @@ class TestSendPhone:
 
         await nm._async_send_phone(hass, entry, "hello", "alice")
 
-        assert log == [("telegram_bot", "send_message", {"chat_id": 111, "message": "hello"})]
+        assert log == [
+            ("telegram_bot", "send_message",
+             {"chat_id": 111, "message": "hello", "parse_mode": "plain_text"})
+        ]
 
 
 class TestCallTelegram:
@@ -141,7 +147,8 @@ class TestCallTelegram:
 
         _, service, data, _ = log[0]
         assert service == "send_photo"
-        assert data == {"chat_id": 111, "url": "https://x/y.jpg"}
+        assert data == {"chat_id": 111, "url": "https://x/y.jpg",
+                        "parse_mode": "plain_text"}
 
     async def test_text_message_with_parse_mode(self):
         log: list = []
