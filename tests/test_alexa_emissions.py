@@ -16,9 +16,11 @@ from notification_manager.alexa_emissions import (  # noqa: E402
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
     from notification_manager.__init__ import (  # noqa: E402
         DATA_ALEXA_EMISSIONS,
+        DATA_ALEXA_RESOLVER,
         _async_send_alexa,
         _async_send_alexa_en,
         _get_emission_log,
+        _make_alexa_resolver,
     )
     from notification_manager.const import DOMAIN  # noqa: E402
 
@@ -247,3 +249,42 @@ class TestRecordingPoint:
 
         assert _get_emission_log(hass) is None
         assert hass.services.async_call.await_count >= 1
+
+
+
+class TestAlexaResolverApi:
+    """The resolver lets consumers detect keywords that reach nobody."""
+
+    def _resolver(self, players, available=True):
+        hass = _make_hass(available=available)
+        entry = _make_entry(players, local_players=LOCAL)
+        return _make_alexa_resolver(hass, entry), hass
+
+    def test_resolves_a_matching_keyword(self):
+        resolve, _ = self._resolver(["media_player.kitchen_echo"])
+        assert resolve("kitchen") == ["media_player.kitchen_echo"]
+
+    def test_returns_empty_for_a_keyword_matching_nothing(self):
+        """The whole point: prove 'salon'-style keywords reach nobody."""
+        resolve, _ = self._resolver(["media_player.kitchen_echo"])
+        assert resolve("salon") == []
+
+    def test_unavailable_speaker_is_filtered_out(self):
+        resolve, _ = self._resolver(["media_player.kitchen_echo"], available=False)
+        assert resolve("kitchen") == []
+        # …but it is still resolvable when availability is not requested
+        assert resolve("kitchen", available_only=False) == ["media_player.kitchen_echo"]
+
+    def test_disabled_target_resolves_to_nothing(self):
+        resolve, _ = self._resolver(["media_player.kitchen_echo"])
+        assert resolve("aucun") == []
+
+    def test_registered_in_hass_data(self):
+        hass = _make_hass()
+        hass.data = {DOMAIN: {}}
+        entry = _make_entry(["media_player.kitchen_echo"])
+        hass.data[DOMAIN][DATA_ALEXA_RESOLVER] = _make_alexa_resolver(hass, entry)
+
+        resolver = hass.data[DOMAIN][DATA_ALEXA_RESOLVER]
+        assert callable(resolver)
+        assert resolver("kitchen") == ["media_player.kitchen_echo"]

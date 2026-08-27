@@ -59,6 +59,9 @@ DATA_ALEXA_LOCK = "_alexa_lock"
 # Internal hass.data keys MUST start with "_": async_unload_entry counts every
 # other key as a config entry when deciding whether to remove the services.
 DATA_ALEXA_EMISSIONS = "_alexa_emissions"
+# Lets a consumer ask "would this keyword actually reach a speaker?" instead of
+# duplicating the resolution rules and drifting from them.
+DATA_ALEXA_RESOLVER = "_alexa_resolver"
 
 # Bounds for the recent_alexa_emissions service window.
 MAX_EMISSION_QUERY_SECONDS = 3600
@@ -131,6 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             retention=timedelta(minutes=ALEXA_EMISSION_RETENTION_MINUTES),
         ),
     )
+    hass.data[DOMAIN][DATA_ALEXA_RESOLVER] = _make_alexa_resolver(hass, entry)
 
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -600,6 +604,30 @@ async def _async_set_volume(hass: HomeAssistant, entity_id: str, volume: float) 
         )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.warning("Failed to set volume for %s: %s", entity_id, exc)
+
+
+def _make_alexa_resolver(hass: HomeAssistant, entry: ConfigEntry):
+    """Build the resolver exposed to other components.
+
+    Answers which speakers a ``notification_alexa`` value really reaches, using
+    the same rules as an actual TTS call. A consumer can therefore detect a
+    keyword that resolves to nothing — a silent "nobody hears it" failure —
+    without reimplementing keyword matching.
+    """
+
+    def resolve(notification_alexa: str, available_only: bool = True) -> list[str]:
+        cfg = _get_runtime_config(entry)
+        targets = _resolve_alexa_targets(notification_alexa, cfg["alexa_players"])
+        if not available_only:
+            return targets
+        return [
+            target
+            for target in targets
+            if (state := hass.states.get(target)) is not None
+            and state.state != "unavailable"
+        ]
+
+    return resolve
 
 
 def _get_emission_log(hass: HomeAssistant) -> AlexaEmissionLog | None:
