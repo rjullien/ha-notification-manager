@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable
+from datetime import timedelta
+from typing import Awaitable, Sequence
 
 import aiohttp
 import voluptuous as vol
@@ -18,14 +19,18 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers import config_validation as cv
 
+from .alexa_emissions import AlexaEmissionLog
 from .bridge_http import async_close_bridge_sessions, async_get_bridge_session
 from .watchdog import async_setup_watchdog, EntityWatchdog
 from .const import (
     ALEXA_DEFAULT_KEYWORD,
+    ALEXA_EMISSION_LOG_SIZE,
+    ALEXA_EMISSION_RETENTION_MINUTES,
     ALEXA_KEYWORD_ALIASES,
     ALEXA_DEFAULT_VOLUME,
     ALEXA_EN_DELAY,
     ALEXA_EN_TARGET as _CONST_ALEXA_EN_TARGET,
+    ALEXA_LOCAL_PLAYERS as _CONST_ALEXA_LOCAL_PLAYERS,
     ALEXA_PLAYERS as _CONST_ALEXA_PLAYERS,
     ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
     ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
@@ -43,6 +48,7 @@ from .const import (
     PHONE_TARGETS as _CONST_PHONE_TARGETS,
     PLATFORMS,
     SERVICE_NOTIFY,
+    SERVICE_RECENT_ALEXA_EMISSIONS,
     WHATSAPP_CONTACTS as _CONST_WHATSAPP_CONTACTS,
     TELEGRAM_GROUPS as _CONST_TELEGRAM_GROUPS,
 )
@@ -50,6 +56,16 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 DATA_ALEXA_LOCK = "_alexa_lock"
+# Internal hass.data keys MUST start with "_": async_unload_entry counts every
+# other key as a config entry when deciding whether to remove the services.
+DATA_ALEXA_EMISSIONS = "_alexa_emissions"
+# Lets a consumer ask "would this keyword actually reach a speaker?" instead of
+# duplicating the resolution rules and drifting from them.
+DATA_ALEXA_RESOLVER = "_alexa_resolver"
+
+# Bounds for the recent_alexa_emissions service window.
+MAX_EMISSION_QUERY_SECONDS = 3600
+DEFAULT_EMISSION_QUERY_SECONDS = 120
 
 # ── Service schema ────────────────────────────────────────────────────────────
 SERVICE_NOTIFY_SCHEMA = vol.Schema(
@@ -109,6 +125,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Serialises Alexa volume save→TTS→restore cycles so overlapping notify
     # calls can't capture the TTS volume as the "original" one.
     hass.data[DOMAIN].setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
+    # In-memory only, shared by all entries: consumers ask "did a speaker in
+    # this house just talk?" instead of re-implementing target resolution.
+    hass.data[DOMAIN].setdefault(
+        DATA_ALEXA_EMISSIONS,
+        AlexaEmissionLog(
+            max_entries=ALEXA_EMISSION_LOG_SIZE,
+            retention=timedelta(minutes=ALEXA_EMISSION_RETENTION_MINUTES),
+        ),
+    )
+    hass.data[DOMAIN][DATA_ALEXA_RESOLVER] = _make_alexa_resolver(hass, entry)
 
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -214,6 +240,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         supports_response=SupportsResponse.ONLY,
     )
 
+    RECENT_EMISSIONS_SCHEMA = vol.Schema({
+        vol.Optional("within_seconds", default=DEFAULT_EMISSION_QUERY_SECONDS): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=MAX_EMISSION_QUERY_SECONDS)
+        ),
+        vol.Optional("local_only", default=False): cv.boolean,
+    })
+
+    async def handle_recent_alexa_emissions(call: ServiceCall) -> dict:
+        """Return Alexa TTS emissions from the in-memory log (no persistence).
+
+        Intended for real-time correlation ("was that noise just our own
+        announcement?") and for diagnostics. Admin-only: the entries carry a
+        snippet of what was spoken.
+        """
+        await _async_require_admin(hass, call)
+
+        log = _get_emission_log(hass)
+        if log is None:
+            return {"emissions": [], "count": 0, "available": False}
+
+        within = timedelta(
+            seconds=call.data.get("within_seconds", DEFAULT_EMISSION_QUERY_SECONDS)
+        )
+        emissions = log.recent(within, local_only=call.data.get("local_only", False))
+        return {
+            "emissions": [e.as_dict() for e in emissions],
+            "count": len(emissions),
+            "available": True,
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RECENT_ALEXA_EMISSIONS,
+        handle_recent_alexa_emissions,
+        schema=RECENT_EMISSIONS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+
     # Start entity watchdog
     watchdog = async_setup_watchdog(hass, entry)
     hass.data[DOMAIN][entry.entry_id]["watchdog"] = watchdog
@@ -244,6 +308,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     remaining_entries = [k for k in hass.data.get(DOMAIN, {}) if not k.startswith("_")]
     if not remaining_entries:
         hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
+        hass.services.async_remove(DOMAIN, SERVICE_RECENT_ALEXA_EMISSIONS)
         hass.services.async_remove(DOMAIN, "whatsapp_bridge_logs")
         hass.services.async_remove(DOMAIN, "whatsapp_bridge_restart")
         await async_close_bridge_sessions(hass)
@@ -276,6 +341,7 @@ def _get_runtime_config(entry: ConfigEntry) -> dict:
         "phone_default_targets": d.get("phone_default_targets") or list(_CONST_PHONE_DEFAULT_TARGETS),
         "whatsapp_contacts": d.get("whatsapp_contacts") or _CONST_WHATSAPP_CONTACTS,
         "alexa_players": d.get("alexa_players") or _CONST_ALEXA_PLAYERS,
+        "alexa_local_players": d.get("alexa_local_players") or list(_CONST_ALEXA_LOCAL_PLAYERS),
         "alexa_en_target": d.get("alexa_en_target") or _CONST_ALEXA_EN_TARGET,
         "alexa_tts_volume": d.get("alexa_tts_volume") if d.get("alexa_tts_volume") is not None else _CONST_ALEXA_TTS_VOLUME,
         "alexa_post_tts_delay": d.get("alexa_post_tts_delay") if d.get("alexa_post_tts_delay") is not None else _CONST_ALEXA_POST_TTS_DELAY,
@@ -315,12 +381,20 @@ async def _async_handle_notify(
     # Alexa runs as detached background tasks: the FR flow holds the speakers
     # for post_tts_delay seconds and the EN flow has its own start delay —
     # neither should block the service call nor wait on slow WhatsApp retries.
+    # Propagated to the emission log so a caller can recognise its own TTS and
+    # avoid correlating against sound it produced itself.
+    context_id = getattr(getattr(call, "context", None), "id", None)
+    if not isinstance(context_id, str):
+        context_id = None
+
     if message_alexa and notification_alexa.strip().lower() not in (
         "aucun", "none", "off", "disable"
     ):
         hass.async_create_task(
             _run_logged(
-                _async_send_alexa(hass, entry, message_alexa, notification_alexa),
+                _async_send_alexa(
+                    hass, entry, message_alexa, notification_alexa, context_id
+                ),
                 "Alexa TTS",
             )
         )
@@ -328,7 +402,9 @@ async def _async_handle_notify(
     if message_alexa_en:
         hass.async_create_task(
             _run_logged(
-                _async_send_alexa_en_delayed(hass, entry, message_alexa_en),
+                _async_send_alexa_en_delayed(
+                    hass, entry, message_alexa_en, context_id
+                ),
                 "English Alexa TTS",
             )
         )
@@ -530,8 +606,71 @@ async def _async_set_volume(hass: HomeAssistant, entity_id: str, volume: float) 
         _LOGGER.warning("Failed to set volume for %s: %s", entity_id, exc)
 
 
+def _make_alexa_resolver(hass: HomeAssistant, entry: ConfigEntry):
+    """Build the resolver exposed to other components.
+
+    Answers which speakers a ``notification_alexa`` value really reaches, using
+    the same rules as an actual TTS call. A consumer can therefore detect a
+    keyword that resolves to nothing — a silent "nobody hears it" failure —
+    without reimplementing keyword matching.
+    """
+
+    def resolve(notification_alexa: str, available_only: bool = True) -> list[str]:
+        cfg = _get_runtime_config(entry)
+        targets = _resolve_alexa_targets(notification_alexa, cfg["alexa_players"])
+        if not available_only:
+            return targets
+        return [
+            target
+            for target in targets
+            if (state := hass.states.get(target)) is not None
+            and state.state != "unavailable"
+        ]
+
+    return resolve
+
+
+def _get_emission_log(hass: HomeAssistant) -> AlexaEmissionLog | None:
+    """Return the in-memory Alexa emission log, if the integration is loaded."""
+    log = hass.data.get(DOMAIN, {}).get(DATA_ALEXA_EMISSIONS)
+    return log if isinstance(log, AlexaEmissionLog) else None
+
+
+def _record_alexa_emission(
+    hass: HomeAssistant,
+    targets: Sequence[str],
+    kind: str,
+    cfg: dict,
+    message: str,
+    context_id: str | None,
+) -> None:
+    """Record a TTS emission that was actually issued to real speakers.
+
+    Never raises: the log is an observability aid and must not be able to break
+    a notification.
+    """
+    log = _get_emission_log(hass)
+    if log is None:
+        return
+    try:
+        log.record(
+            targets=targets,
+            kind=kind,
+            local_players=cfg.get("alexa_local_players") or (),
+            context_id=context_id,
+            message=message,
+            speech_estimate=timedelta(seconds=float(cfg.get("alexa_post_tts_delay") or 0)),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("Failed to record Alexa emission: %s", exc)
+
+
 async def _async_send_alexa(
-    hass: HomeAssistant, entry: ConfigEntry, message: str, notification_alexa: str
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    message: str,
+    notification_alexa: str,
+    context_id: str | None = None,
 ) -> None:
     """Send Alexa TTS with volume save/restore.
 
@@ -606,6 +745,11 @@ async def _async_send_alexa(
                 blocking=True,
             )
             _LOGGER.debug("Alexa TTS sent to %s", targets)
+            # Recorded only here: `targets` is resolved and availability
+            # filtered, so this is proof that speakers really spoke.
+            _record_alexa_emission(
+                hass, targets, "tts_fr", cfg, message, context_id
+            )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.error("Failed to send Alexa TTS: %s", exc)
 
@@ -661,7 +805,10 @@ def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list
 
 
 async def _async_send_alexa_en_delayed(
-    hass: HomeAssistant, entry: ConfigEntry, message: str
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    message: str,
+    context_id: str | None = None,
 ) -> None:
     """Send the English Alexa TTS after its fixed delay.
 
@@ -670,10 +817,15 @@ async def _async_send_alexa_en_delayed(
     down used to delay it by 30+ seconds).
     """
     await asyncio.sleep(ALEXA_EN_DELAY)
-    await _async_send_alexa_en(hass, entry, message)
+    await _async_send_alexa_en(hass, entry, message, context_id)
 
 
-async def _async_send_alexa_en(hass: HomeAssistant, entry: ConfigEntry, message: str) -> None:
+async def _async_send_alexa_en(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    message: str,
+    context_id: str | None = None,
+) -> None:
     """Send English Alexa TTS to the dedicated English Echo."""
     # Skip if alexa_media integration is not available on this instance
     if not hass.services.has_service("notify", "alexa_media"):
@@ -697,6 +849,9 @@ async def _async_send_alexa_en(hass: HomeAssistant, entry: ConfigEntry, message:
             blocking=True,
         )
         _LOGGER.debug("English Alexa TTS sent: %r", message)
+        _record_alexa_emission(
+            hass, [alexa_en_target], "tts_en", cfg, message, context_id
+        )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.error("Failed to send English Alexa TTS: %s", exc)
 

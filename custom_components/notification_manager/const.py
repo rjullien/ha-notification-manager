@@ -17,6 +17,13 @@ DEFAULT_VERIFY_SSL = True
 # Alexa media players - entity_ids of your Echo devices
 ALEXA_PLAYERS: list[str] = []
 
+# Subset of ALEXA_PLAYERS physically located in the monitored house.
+# Used to flag emissions as "local" in the emission log, so a consumer (e.g. a
+# noise-based intrusion detector) can tell "a speaker spoke in THIS house" from
+# "a speaker spoke in another house driven by the same HA instance".
+# Empty = cannot distinguish → every emission is flagged local.
+ALEXA_LOCAL_PLAYERS: list[str] = []
+
 # Default keyword when notification_alexa is empty (matches show entities)
 ALEXA_DEFAULT_KEYWORD = "show"
 
@@ -37,6 +44,12 @@ ALEXA_POST_TTS_DELAY = 8
 
 # Delay before sending English Alexa message (seconds)
 ALEXA_EN_DELAY = 3
+
+# ── Alexa emission log (in-memory, not persisted) ─────────────────────────────
+
+# Max emissions kept, and how long an entry stays queryable.
+ALEXA_EMISSION_LOG_SIZE = 50
+ALEXA_EMISSION_RETENTION_MINUTES = 30
 
 # English Alexa target entity_id
 ALEXA_EN_TARGET = ""
@@ -111,6 +124,7 @@ SENSOR_STATE_UNKNOWN = "unknown"
 # ── Service ───────────────────────────────────────────────────────────────────
 
 SERVICE_NOTIFY = "notify"
+SERVICE_RECENT_ALEXA_EMISSIONS = "recent_alexa_emissions"
 
 # Platforms
 PLATFORMS = ["sensor"]
