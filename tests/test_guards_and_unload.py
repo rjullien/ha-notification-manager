@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
     import notification_manager.__init__ as nm
+    from notification_manager.alexa_emissions import AlexaEmissionLog
     from notification_manager.const import DOMAIN
 
 Unauthorized = sys.modules["homeassistant.exceptions"].Unauthorized
@@ -130,6 +131,7 @@ class TestUnloadEntry:
         hass = self._make_hass({
             "entry1": {"coordinator": coordinator},
             nm.DATA_ALEXA_LOCK: asyncio.Lock(),  # internal key must be ignored
+            nm.DATA_ALEXA_EMISSIONS: AlexaEmissionLog(),  # idem
         })
         entry = MagicMock()
         entry.entry_id = "entry1"
@@ -140,7 +142,12 @@ class TestUnloadEntry:
         assert result is True
         coordinator.async_shutdown.assert_awaited_once()
         removed = {c.args[1] for c in hass.services.async_remove.call_args_list}
-        assert removed == {"notify", "whatsapp_bridge_logs", "whatsapp_bridge_restart"}
+        assert removed == {
+            "notify",
+            "recent_alexa_emissions",
+            "whatsapp_bridge_logs",
+            "whatsapp_bridge_restart",
+        }
         close.assert_awaited_once()
         assert DOMAIN not in hass.data
 
