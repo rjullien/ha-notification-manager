@@ -31,6 +31,7 @@ from .const import (
     WATCHDOG_COOLDOWN_HOURS,
     WATCHDOG_TELEGRAM_CHAT_IDS,
 )
+from .telegram_text import PARSE_MODE_HTML, escape_html
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -150,8 +151,13 @@ class EntityWatchdog:
                         )
                         minutes = int(elapsed.total_seconds() // 60)
                         emoji = "🚨" if tier == "critical" else "⚠️"
+                        # friendly_name is user-controlled and entity_ids are
+                        # full of "_": both must be escaped, since this message
+                        # is sent with a real parse_mode (see below).
                         alerts.append(
-                            f"• {emoji} {friendly} (`{entity_id}`) — unavailable depuis {minutes} min"
+                            f"• {emoji} {escape_html(friendly)} "
+                            f"(<code>{escape_html(entity_id)}</code>) "
+                            f"— unavailable depuis {minutes} min"
                         )
                         self._last_alerted[entity_id] = now
             else:
@@ -163,15 +169,18 @@ class EntityWatchdog:
                     self._last_alerted.pop(entity_id, None)
 
         if alerts:
+            # HTML rather than legacy Markdown: legacy Markdown offers no escape
+            # syntax, so an entity_id or friendly_name could never be embedded
+            # safely in a bold/code span.
             header = (
-                "🚨 *Watchdog CRITIQUE — Arrosage/Irrigation*"
+                "🚨 <b>Watchdog CRITIQUE — Arrosage/Irrigation</b>"
                 if tier == "critical"
-                else "⚠️ *Entity Watchdog — Entités unavailable*"
+                else "⚠️ <b>Entity Watchdog — Entités unavailable</b>"
             )
             message = (
                 f"{header}\n\n"
                 + "\n".join(alerts)
-                + "\n\n_Vérifier l'intégration ou l'appareil._"
+                + "\n\n<i>Vérifier l'intégration ou l'appareil.</i>"
             )
             await self._async_send_alert(message)
 
@@ -186,7 +195,7 @@ class EntityWatchdog:
                     {
                         "chat_id": chat_id,
                         "message": message,
-                        "parse_mode": "markdown",
+                        "parse_mode": PARSE_MODE_HTML,
                     },
                     blocking=True,
                 )

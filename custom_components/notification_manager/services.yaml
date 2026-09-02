@@ -113,6 +113,9 @@ notify:
       description: >
         Mode de parsing pour les messages Telegram.
         Permet le formatage HTML ou Markdown dans les messages.
+        Laisser vide envoie le message en texte brut : les "_" et "*"
+        (entity_ids, libellés snake_case, noms de fichiers) sont alors
+        transmis tels quels au lieu de faire échouer l'envoi.
       example: "html"
       required: false
       default: ""
