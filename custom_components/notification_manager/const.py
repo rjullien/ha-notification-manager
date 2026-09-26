@@ -33,6 +33,12 @@ ALEXA_KEYWORD_ALIASES: dict[str, str] = {
     "show_2": "rene_show",
 }
 
+# Per-keyword entity_ids to drop after matching (override in private config).
+# Lets a device stay in ALEXA_PLAYERS for explicit compound keywords (e.g.
+# ``show_11`` → echo_show_11_…) while being omitted from a broad keyword like
+# ``show`` / the empty default. Keys are post-alias keywords.
+ALEXA_KEYWORD_EXCLUDES: dict[str, list[str]] = {}
+
 # Alexa TTS volume
 ALEXA_TTS_VOLUME = 0.7
 

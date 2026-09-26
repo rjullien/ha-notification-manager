@@ -99,6 +99,39 @@ class TestAlexaTargetResolution:
         result = _resolve_alexa_targets("aucun", _SAMPLE_ALEXA_PLAYERS)
         assert result == []
 
+    def test_keyword_excludes_from_broad_show(self):
+        """Bedroom Show stays in players but is dropped from bare show."""
+        players = [
+            "media_player.rene_echo_show",
+            "media_player.echo_show_chambre",
+            "media_player.echo_show_11_rene_2",
+            "media_player.jullien_echo_show",
+        ]
+        excludes = {"show": ["media_player.echo_show_11_rene_2"]}
+        with patch.object(_nm, "ALEXA_DEFAULT_KEYWORD", "show"), patch.object(
+            _nm, "ALEXA_KEYWORD_EXCLUDES", excludes
+        ):
+            empty = _resolve_alexa_targets("", players)
+            show = _resolve_alexa_targets("show", players)
+        for result in (empty, show):
+            assert "media_player.echo_show_11_rene_2" not in result
+            assert "media_player.rene_echo_show" in result
+            assert "media_player.echo_show_chambre" in result
+            assert "media_player.jullien_echo_show" in result
+
+    def test_show_11_compound_still_targets_excluded_show(self):
+        """Compound show_11 still reaches the bedroom device alone."""
+        players = [
+            "media_player.rene_echo_show",
+            "media_player.echo_show_chambre",
+            "media_player.echo_show_11_rene_2",
+            "media_player.jullien_echo_show",
+        ]
+        excludes = {"show": ["media_player.echo_show_11_rene_2"]}
+        with patch.object(_nm, "ALEXA_KEYWORD_EXCLUDES", excludes):
+            result = _resolve_alexa_targets("show_11", players)
+        assert result == ["media_player.echo_show_11_rene_2"]
+
 
 class TestWhatsAppTargetResolution:
     """Test _resolve_whatsapp_targets function."""

@@ -17,6 +17,12 @@ ALEXA_PLAYERS = [
 # English Alexa target
 ALEXA_EN_TARGET = "media_player.your_english_echo"
 
+# Optional: exclude specific players from a broad keyword while keeping them
+# reachable via a more specific compound keyword (e.g. show_11).
+# ALEXA_KEYWORD_EXCLUDES = {
+#     "show": ["media_player.your_bedroom_echo_show"],
+# }
+
 # ── Phone notification targets ────────────────────────────────────────────────
 PHONE_TARGETS = {
     "person1": {
