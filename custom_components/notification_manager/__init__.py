@@ -785,7 +785,7 @@ def _keyword_matches_alexa_player(keyword: str, player: str) -> bool:
     Simple keywords use substring match (legacy mamagetts behaviour).
     Compound keywords with spaces or underscores (e.g. ``rene_show``) require
     every part to appear in the entity_id — so ``rene_show`` matches
-    ``rene_echo_show`` but not ``rene_echo_spot``.
+    ``your_kitchen_rene_echo_show`` but not ``your_kitchen_rene_echo_spot``.
     """
     parts = [p for p in keyword.replace("_", " ").split() if p]
     if len(parts) > 1:
@@ -802,9 +802,11 @@ def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list
     """Resolve notification_alexa string to list of entity_ids.
 
     After substring/compound matching, drops any player listed under
-    ``ALEXA_KEYWORD_EXCLUDES`` for that keyword. Excludes are per-keyword, so
-    a bedroom Show can be omitted from broad ``show`` while still matching
-    ``show_11``.
+    ``ALEXA_KEYWORD_EXCLUDES`` for that keyword. Lookup uses the post-alias
+    keyword (after ``ALEXA_KEYWORD_ALIASES``), so an exclude for callers of
+    ``show_2`` must be keyed as ``rene_show``. Excludes are per-keyword, so
+    a device can be omitted from broad ``show`` / ``rene_show`` while still
+    matching a more specific compound like ``show_11``.
     """
     value = notification_alexa.strip().lower()
     if not value:

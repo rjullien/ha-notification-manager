@@ -86,11 +86,12 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 
 **Alexa** (`notification_alexa`) — pattern matching:
 - Space-separated **keywords** matched as substrings against `media_player.*` entity IDs
-- Example: `"show"` → matches all entities containing "show" (e.g. `media_player.rene_echo_show`)
+- Example: `"show"` → matches all entities containing "show" (e.g. `media_player.your_kitchen_echo_show`)
 - Compound keywords with `_` / spaces (e.g. `"rene_show"`, `"show_11"`) require **every** part to appear in the entity_id
+- Legacy aliases (`ALEXA_KEYWORD_ALIASES`) rewrite some values first — e.g. `"show_2"` → `"rene_show"`
 - Empty → defaults to keyword `"show"` (Echo Show devices)
 - `"aucun"` / `"none"` → skip
-- Optional `ALEXA_KEYWORD_EXCLUDES` in private config: drop specific entity_ids from a broad keyword (e.g. exclude a bedroom Show from `"show"` while still targeting it via `"show_11"`)
+- Optional `ALEXA_KEYWORD_EXCLUDES` in private config: drop specific entity_ids from a keyword **after** alias resolution. Keys must be the post-alias keyword (e.g. exclude under `"rene_show"` when callers use `"show_2"`). A bedroom Show can stay out of broad `"show"` / `"rene_show"` / bare `"rene"` while still matching `"show_11"`
 - ⚠️ **No `"all"` keyword** — speakers span multiple locations, broadcasting everywhere is forbidden
 
 > The algorithm is inherited from the original mamagetts automation: substring matching gives flexibility without maintaining a separate name→entity mapping.
@@ -188,8 +189,8 @@ Add to `/config/notification_manager_private.py`:
 ```python
 # Standard tier — checked every 60 min, alert after 15 min unavailable
 WATCHDOG_ENTITIES = [
-    "media_player.rene_echo_show",
-    "media_player.kitchen_echo",
+    "media_player.your_kitchen_echo_show",
+    "media_player.your_living_echo",
 ]
 
 # Critical tier — checked every 10 min, alert after 5 min unavailable

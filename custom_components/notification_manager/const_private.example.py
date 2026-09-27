@@ -17,10 +17,18 @@ ALEXA_PLAYERS = [
 # English Alexa target
 ALEXA_EN_TARGET = "media_player.your_english_echo"
 
-# Optional: exclude specific players from a broad keyword while keeping them
-# reachable via a more specific compound keyword (e.g. show_11).
+# Optional: exclude specific players from a keyword after matching, while
+# keeping them in ALEXA_PLAYERS for more specific compounds (e.g. show_11).
+#
+# Keys are POST-ALIAS keywords (see ALEXA_KEYWORD_ALIASES in const.py).
+# Example: notification_alexa="show_2" resolves to the keyword "rene_show",
+# so an exclude for that path must use "rene_show", not "show_2".
+# Bare "rene" may also substring-match the same device — add that key too
+# if you want to keep it out of person-name style keywords.
 # ALEXA_KEYWORD_EXCLUDES = {
 #     "show": ["media_player.your_bedroom_echo_show"],
+#     "rene_show": ["media_player.your_bedroom_echo_show"],
+#     "rene": ["media_player.your_bedroom_echo_show"],
 # }
 
 # ── Phone notification targets ────────────────────────────────────────────────
