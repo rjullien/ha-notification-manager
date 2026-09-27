@@ -91,8 +91,10 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 - Legacy aliases (`ALEXA_KEYWORD_ALIASES`) rewrite some values first — e.g. `"show_2"` → `"rene_show"`
 - Empty → defaults to keyword `"show"` (Echo Show devices)
 - `"aucun"` / `"none"` → skip
-- Optional `ALEXA_KEYWORD_EXCLUDES` in private config: drop specific entity_ids from a keyword **after** alias resolution. Keys must be the post-alias keyword (e.g. exclude under `"rene_show"` when callers use `"show_2"`). A bedroom Show can stay out of broad `"show"` / `"rene_show"` / bare `"rene"` while still matching `"show_11"`
+- Optional `ALEXA_KEYWORD_EXCLUDES`: drop specific entity_ids from a keyword **after** alias resolution. Keys must be the **post-alias** keyword (e.g. exclude under `"rene_show"` when callers use `"show_2"`; bare `"rene"` may also need an entry if substring match would hit the same device). A bedroom Show placeholder can stay out of broad `"show"` / `"rene_show"` while still matching `"show_11"`
 - ⚠️ **No `"all"` keyword** — speakers span multiple locations, broadcasting everywhere is forbidden
+
+> Site-specific player lists and exclude maps live in the private Home Assistant config repo (not in this public component). This repo documents the mechanism only — see `const_private.example.py` for placeholder shape.
 
 > The algorithm is inherited from the original mamagetts automation: substring matching gives flexibility without maintaining a separate name→entity mapping.
 

@@ -21,10 +21,13 @@ ALEXA_EN_TARGET = "media_player.your_english_echo"
 # keeping them in ALEXA_PLAYERS for more specific compounds (e.g. show_11).
 #
 # Keys are POST-ALIAS keywords (see ALEXA_KEYWORD_ALIASES in const.py).
-# Example: notification_alexa="show_2" resolves to the keyword "rene_show",
+# Technical example: notification_alexa="show_2" resolves to "rene_show",
 # so an exclude for that path must use "rene_show", not "show_2".
 # Bare "rene" may also substring-match the same device — add that key too
-# if you want to keep it out of person-name style keywords.
+# if needed.
+#
+# Site-specific player lists and exclude maps live in the private Home
+# Assistant config repo (not in this public component). Placeholders only:
 # ALEXA_KEYWORD_EXCLUDES = {
 #     "show": ["media_player.your_bedroom_echo_show"],
 #     "rene_show": ["media_player.your_bedroom_echo_show"],
