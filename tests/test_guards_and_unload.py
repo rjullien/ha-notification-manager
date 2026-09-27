@@ -131,6 +131,7 @@ class TestUnloadEntry:
         hass = self._make_hass({
             "entry1": {"coordinator": coordinator},
             nm.DATA_ALEXA_LOCK: asyncio.Lock(),  # internal key must be ignored
+            nm.DATA_ALEXA_LAST_GOOD_VOLUMES: {},  # idem
             nm.DATA_ALEXA_EMISSIONS: AlexaEmissionLog(),  # idem
         })
         entry = MagicMock()

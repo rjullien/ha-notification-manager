@@ -149,13 +149,13 @@ Polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
 
 ## Alexa TTS — volume management
 
-1. **Read** current volume from each target entity (kept in memory)
+1. **Read** current volume from each target entity, cross-checked against a per-entity last-known-good cache
 2. **Set** all targets to TTS volume (default `0.7`) — awaited *before* TTS so speech never starts at the old level
 3. **Send** TTS via `notify.alexa_media`
 4. **Wait** configurable delay (default `8s`)
-5. **Restore** each player to its saved volume
+5. **Restore** each player to its resting volume (retry once on failure)
 
-The full cycle is serialised behind a lock: overlapping `notify` calls queue up instead of capturing the TTS volume as the "original" one. The English message (`message_alexa_en`) runs as an independent task with its own 3 s delay — it is never delayed by slow channels (e.g. WhatsApp retries).
+The full cycle is serialised behind a lock so overlapping `notify` calls cannot interleave. That alone is not enough: Alexa Media often leaves HA's `volume_level` stuck at the TTS level after restore returns, so the next *serialised* cycle would save TTS as the "original" and leave the speaker loud. The last-known-good cache (and treating "current == TTS volume" as suspicious when a resting volume is remembered) closes that gap. The English message (`message_alexa_en`) runs as an independent task with its own 3 s delay — it is never delayed by slow channels (e.g. WhatsApp retries).
 
 ---
 
@@ -232,7 +232,7 @@ WATCHDOG_COOLDOWN_HOURS = 6                # Hours between re-alerts
 | Service not available | Restart HA; check logs for `notification_manager` |
 | Alexa TTS not working | Verify Alexa Media Player integration + entity IDs in `const.py` |
 | WhatsApp not delivered | Check `sensor.notification_manager_whatsapp_status`; verify bridge URL/token |
-| Volume not restored | Restore manually if HA restarted mid-TTS (volumes are held in memory during the cycle) |
+| Volume not restored | Restore manually if HA restarted mid-TTS (resting volumes are in-memory only; last-known-good is lost on restart) |
 
 ---
 
