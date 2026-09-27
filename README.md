@@ -242,7 +242,7 @@ WATCHDOG_COOLDOWN_HOURS = 6                # Hours between re-alerts
 - The diagnostic services `whatsapp_bridge_logs` and `whatsapp_bridge_restart` are **restricted to administrator users** (bridge logs may contain phone numbers and message contents).
 - The status sensor no longer exposes the bridge URL as a state attribute.
 - Tailscale MagicDNS hostnames are resolved **in-process** via `TAILSCALE_DNS_OVERRIDES` (see `const_private.example.py`) — `/etc/hosts` is never modified.
-- Keep all personal data (names, chat IDs, JIDs) in `/config/notification_manager_private.py`; never commit it.
+- Keep all personal data (names, chat IDs, JIDs, real Alexa entity lists / exclude maps) in `/config/notification_manager_private.py` on the HA host; never commit them here. Site-specific docs for those maps live in the private Home Assistant config repo, not in this public component.
 
 ---
 

@@ -39,6 +39,7 @@ ALEXA_KEYWORD_ALIASES: dict[str, str] = {
 # ``show_11``) while being omitted from a broad keyword like ``show`` / the
 # empty default. Keys are post-alias keywords — if ``show_2`` aliases to
 # ``rene_show``, put the exclude under ``rene_show`` (not ``show_2``).
+# Site-specific player/exclude maps live in the private HA config repo.
 ALEXA_KEYWORD_EXCLUDES: dict[str, list[str]] = {}
 
 # Alexa TTS volume
