@@ -10,11 +10,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
     from notification_manager.__init__ import (
+        DATA_ALEXA_LAST_GOOD_VOLUMES,
         DATA_ALEXA_LOCK,
         _async_send_alexa,
         _async_send_alexa_en,
+        _resolve_restore_volume,
+        _volumes_close,
     )
     from notification_manager.const import ALEXA_DEFAULT_VOLUME, DOMAIN
+
+
+PLAYER = "media_player.echo_show_bedroom"
 
 
 def _make_hass(call_log: list, volume: float = 0.4):
@@ -34,10 +40,53 @@ def _make_hass(call_log: list, volume: float = 0.4):
     return hass
 
 
+def _make_hass_with_alexa_state_lag(
+    call_log: list,
+    initial_volume: float = 0.4,
+    tts_volume: float = 0.7,
+    *,
+    fail_restore_once: bool = False,
+):
+    """Hass mock whose ``volume_level`` lags like Alexa Media after restore.
+
+    Raising to TTS updates the attribute immediately. A restore ``volume_set``
+    is recorded but does *not* refresh the attribute — matching the real
+    integration lag that left speakers stuck loud across back-to-back cycles.
+    """
+    hass = MagicMock()
+    hass.data = {}
+    attrs = {"volume_level": initial_volume}
+    state = MagicMock()
+    state.state = "on"
+    state.attributes = attrs
+    restore_failures_left = 1 if fail_restore_once else 0
+
+    async def record(domain, service, data, blocking=False):
+        nonlocal restore_failures_left
+        if domain == "media_player" and service == "volume_set":
+            vol = float(data["volume_level"])
+            if (
+                restore_failures_left
+                and not _volumes_close(vol, tts_volume)
+            ):
+                restore_failures_left -= 1
+                raise RuntimeError("alexa volume restore timeout")
+            call_log.append((domain, service, dict(data), blocking))
+            if _volumes_close(vol, tts_volume):
+                attrs["volume_level"] = vol
+            # Restore: leave attrs at TTS level (stale HA state).
+            return
+        call_log.append((domain, service, dict(data), blocking))
+
+    hass.services.async_call = AsyncMock(side_effect=record)
+    hass.states.get = MagicMock(return_value=state)
+    return hass, attrs
+
+
 def _make_entry(players=None, tts_volume=0.7, delay=0):
     entry = MagicMock()
     entry.data = {
-        "alexa_players": players or ["media_player.echo_show_salon"],
+        "alexa_players": players or [PLAYER],
         "alexa_tts_volume": tts_volume,
         "alexa_post_tts_delay": delay,
     }
@@ -167,6 +216,99 @@ class TestAlexaLockSerialisation:
 
         assert lock1 is lock2
         assert isinstance(lock1, asyncio.Lock)
+
+
+class TestAlexaStaleStateRace:
+    """Gap the lock alone missed: HA state still shows TTS after restore."""
+
+    async def test_back_to_back_cycles_ignore_stale_tts_attribute(self):
+        """Second cycle must not save TTS as original when state lags."""
+        log: list = []
+        hass, attrs = _make_hass_with_alexa_state_lag(log)
+        entry = _make_entry(delay=0)
+
+        await _async_send_alexa(hass, entry, "msg1", "show")
+        # After cycle 1 restore, HA still reports TTS — the bug trigger.
+        assert attrs["volume_level"] == 0.7
+
+        await _async_send_alexa(hass, entry, "msg2", "show")
+
+        restores = [
+            d["volume_level"]
+            for _, s, d, *_ in log
+            if s == "volume_set" and d["volume_level"] != 0.7
+        ]
+        assert restores == [0.4, 0.4]
+        assert hass.data[DOMAIN][DATA_ALEXA_LAST_GOOD_VOLUMES][PLAYER] == 0.4
+
+    async def test_concurrent_cycles_with_stale_state_restore_true_original(self):
+        """Overlapping calls + Alexa lag still restore to the resting volume."""
+        log: list = []
+        hass, _attrs = _make_hass_with_alexa_state_lag(log)
+        entry = _make_entry(delay=0)
+
+        await asyncio.gather(
+            _async_send_alexa(hass, entry, "msg1", "show"),
+            _async_send_alexa(hass, entry, "msg2", "show"),
+        )
+
+        restores = [
+            d["volume_level"]
+            for _, s, d, *_ in log
+            if s == "volume_set" and not _volumes_close(d["volume_level"], 0.7)
+        ]
+        assert restores == [0.4, 0.4]
+
+    async def test_failed_restore_still_uses_last_good_next_cycle(self):
+        """A failed restore leaves the device loud; next cycle must heal it."""
+        log: list = []
+        hass, attrs = _make_hass_with_alexa_state_lag(log, fail_restore_once=True)
+        entry = _make_entry(delay=0)
+
+        await _async_send_alexa(hass, entry, "msg1", "show")
+        # First restore attempt failed; attribute still at TTS.
+        assert attrs["volume_level"] == 0.7
+
+        await _async_send_alexa(hass, entry, "msg2", "show")
+
+        restores = [
+            d["volume_level"]
+            for _, s, d, *_ in log
+            if s == "volume_set" and not _volumes_close(d["volume_level"], 0.7)
+        ]
+        # Cycle 1: one successful retry restore (or the retry after fail).
+        # Cycle 2: restore from last-known-good, not from stale TTS attribute.
+        assert 0.4 in restores
+        assert restores[-1] == 0.4
+        assert all(v == 0.4 for v in restores)
+
+    async def test_first_cycle_at_tts_volume_keeps_reported(self):
+        """If the user already rests at TTS volume, do not invent another level."""
+        log: list = []
+        hass = _make_hass(log, volume=0.7)
+        entry = _make_entry()
+
+        await _async_send_alexa(hass, entry, "Bonjour", "show")
+
+        volumes = [d["volume_level"] for _, s, d, *_ in log if s == "volume_set"]
+        assert volumes == [0.7, 0.7]
+
+
+class TestResolveRestoreVolume:
+    """Unit tests for the last-known-good heuristic."""
+
+    def test_trusts_live_volume_when_not_tts(self):
+        last_good: dict[str, float] = {}
+        assert _resolve_restore_volume(PLAYER, 0.35, 0.7, last_good) == 0.35
+        assert last_good[PLAYER] == 0.35
+
+    def test_prefers_last_good_when_live_equals_tts(self):
+        last_good = {PLAYER: 0.4}
+        assert _resolve_restore_volume(PLAYER, 0.7, 0.7, last_good) == 0.4
+
+    def test_missing_live_uses_last_good_then_default(self):
+        assert _resolve_restore_volume(PLAYER, None, 0.7, {PLAYER: 0.3}) == 0.3
+        assert _resolve_restore_volume(PLAYER, None, 0.7, {}) == ALEXA_DEFAULT_VOLUME
 
 
 class TestAlexaEnglish:
