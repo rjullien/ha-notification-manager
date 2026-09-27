@@ -28,15 +28,18 @@ ALEXA_LOCAL_PLAYERS: list[str] = []
 ALEXA_DEFAULT_KEYWORD = "show"
 
 # Legacy keyword aliases (notification_alexa value → resolved keyword).
-# show_2 matched rene_echo_show_2 which is often unavailable (duplicate alexa_media import).
+# show_2 → rene_show (compound match); avoids a legacy single-device entity
+# that was often unavailable after duplicate alexa_media imports.
 ALEXA_KEYWORD_ALIASES: dict[str, str] = {
     "show_2": "rene_show",
 }
 
 # Per-keyword entity_ids to drop after matching (override in private config).
 # Lets a device stay in ALEXA_PLAYERS for explicit compound keywords (e.g.
-# ``show_11`` → echo_show_11_…) while being omitted from a broad keyword like
-# ``show`` / the empty default. Keys are post-alias keywords.
+# ``show_11``) while being omitted from a broad keyword like ``show`` / the
+# empty default. Keys are post-alias keywords — if ``show_2`` aliases to
+# ``rene_show``, put the exclude under ``rene_show`` (not ``show_2``).
+# Site-specific player/exclude maps live in the private HA config repo.
 ALEXA_KEYWORD_EXCLUDES: dict[str, list[str]] = {}
 
 # Alexa TTS volume

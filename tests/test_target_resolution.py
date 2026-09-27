@@ -101,36 +101,79 @@ class TestAlexaTargetResolution:
 
     def test_keyword_excludes_from_broad_show(self):
         """Bedroom Show stays in players but is dropped from bare show."""
+        bedroom = "media_player.your_bedroom_echo_show_11_rene"
         players = [
-            "media_player.rene_echo_show",
-            "media_player.echo_show_chambre",
-            "media_player.echo_show_11_rene_2",
-            "media_player.jullien_echo_show",
+            "media_player.your_kitchen_rene_echo_show",
+            "media_player.your_living_echo_show",
+            bedroom,
+            "media_player.your_office_echo_show",
         ]
-        excludes = {"show": ["media_player.echo_show_11_rene_2"]}
+        excludes = {"show": [bedroom]}
         with patch.object(_nm, "ALEXA_DEFAULT_KEYWORD", "show"), patch.object(
             _nm, "ALEXA_KEYWORD_EXCLUDES", excludes
         ):
             empty = _resolve_alexa_targets("", players)
             show = _resolve_alexa_targets("show", players)
         for result in (empty, show):
-            assert "media_player.echo_show_11_rene_2" not in result
-            assert "media_player.rene_echo_show" in result
-            assert "media_player.echo_show_chambre" in result
-            assert "media_player.jullien_echo_show" in result
+            assert bedroom not in result
+            assert "media_player.your_kitchen_rene_echo_show" in result
+            assert "media_player.your_living_echo_show" in result
+            assert "media_player.your_office_echo_show" in result
 
     def test_show_11_compound_still_targets_excluded_show(self):
         """Compound show_11 still reaches the bedroom device alone."""
+        bedroom = "media_player.your_bedroom_echo_show_11_rene"
         players = [
-            "media_player.rene_echo_show",
-            "media_player.echo_show_chambre",
-            "media_player.echo_show_11_rene_2",
-            "media_player.jullien_echo_show",
+            "media_player.your_kitchen_rene_echo_show",
+            "media_player.your_living_echo_show",
+            bedroom,
+            "media_player.your_office_echo_show",
         ]
-        excludes = {"show": ["media_player.echo_show_11_rene_2"]}
+        excludes = {"show": [bedroom]}
         with patch.object(_nm, "ALEXA_KEYWORD_EXCLUDES", excludes):
             result = _resolve_alexa_targets("show_11", players)
-        assert result == ["media_player.echo_show_11_rene_2"]
+        assert result == [bedroom]
+
+    def test_show_2_alias_exclude_uses_post_alias_rene_show(self):
+        """show_2 aliases to rene_show; exclude key must be post-alias."""
+        bedroom = "media_player.your_bedroom_echo_show_11_rene"
+        kitchen = "media_player.your_kitchen_rene_echo_show"
+        players = [
+            kitchen,
+            "media_player.your_living_echo_show",
+            bedroom,
+            "media_player.your_office_echo_show",
+        ]
+        # Exclude keyed on post-alias "rene_show" (not "show_2").
+        excludes = {"rene_show": [bedroom]}
+        with patch.object(_nm, "ALEXA_KEYWORD_ALIASES", {"show_2": "rene_show"}), patch.object(
+            _nm, "ALEXA_KEYWORD_EXCLUDES", excludes
+        ):
+            via_alias = _resolve_alexa_targets("show_2", players)
+            via_direct = _resolve_alexa_targets("rene_show", players)
+            # show_11 is a different keyword — bedroom still reachable.
+            via_show_11 = _resolve_alexa_targets("show_11", players)
+
+        for result in (via_alias, via_direct):
+            assert bedroom not in result
+            assert kitchen in result
+            # living/office lack "rene" → not matched by compound rene_show
+            assert "media_player.your_living_echo_show" not in result
+            assert "media_player.your_office_echo_show" not in result
+        assert via_show_11 == [bedroom]
+
+    def test_show_2_exclude_under_show_2_key_is_ignored(self):
+        """Excludes keyed on the pre-alias token do not apply after aliasing."""
+        bedroom = "media_player.your_bedroom_echo_show_11_rene"
+        kitchen = "media_player.your_kitchen_rene_echo_show"
+        players = [kitchen, bedroom]
+        excludes = {"show_2": [bedroom]}  # wrong key — lookup is post-alias
+        with patch.object(_nm, "ALEXA_KEYWORD_ALIASES", {"show_2": "rene_show"}), patch.object(
+            _nm, "ALEXA_KEYWORD_EXCLUDES", excludes
+        ):
+            result = _resolve_alexa_targets("show_2", players)
+        assert bedroom in result
+        assert kitchen in result
 
 
 class TestWhatsAppTargetResolution:
