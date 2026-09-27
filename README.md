@@ -86,10 +86,11 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 
 **Alexa** (`notification_alexa`) — pattern matching:
 - Space-separated **keywords** matched as substrings against `media_player.*` entity IDs
-- Example: `"show"` → matches all entities containing "show" (e.g. `media_player.rene_echo_show_2`)
-- Example: `"salon chambre"` → matches entities containing "salon" OR "chambre"
+- Example: `"show"` → matches all entities containing "show" (e.g. `media_player.rene_echo_show`)
+- Compound keywords with `_` / spaces (e.g. `"rene_show"`, `"show_11"`) require **every** part to appear in the entity_id
 - Empty → defaults to keyword `"show"` (Echo Show devices)
-- `"aucun"` / `"none"` / `"off"` → skip
+- `"aucun"` / `"none"` → skip
+- Optional `ALEXA_KEYWORD_EXCLUDES` in private config: drop specific entity_ids from a broad keyword (e.g. exclude a bedroom Show from `"show"` while still targeting it via `"show_11"`)
 - ⚠️ **No `"all"` keyword** — speakers span multiple locations, broadcasting everywhere is forbidden
 
 > The algorithm is inherited from the original mamagetts automation: substring matching gives flexibility without maintaining a separate name→entity mapping.

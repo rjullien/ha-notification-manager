@@ -28,6 +28,7 @@ from .const import (
     ALEXA_EMISSION_LOG_SIZE,
     ALEXA_EMISSION_RETENTION_MINUTES,
     ALEXA_KEYWORD_ALIASES,
+    ALEXA_KEYWORD_EXCLUDES,
     ALEXA_DEFAULT_VOLUME,
     ALEXA_EN_DELAY,
     ALEXA_EN_TARGET as _CONST_ALEXA_EN_TARGET,
@@ -792,13 +793,29 @@ def _keyword_matches_alexa_player(keyword: str, player: str) -> bool:
     return keyword in player
 
 
+def _excluded_players_for_keyword(keyword: str) -> set[str]:
+    """Return lowercased entity_ids excluded for ``keyword`` (post-alias)."""
+    return {e.lower() for e in ALEXA_KEYWORD_EXCLUDES.get(keyword, ()) if e}
+
+
 def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list[str]:
-    """Resolve notification_alexa string to list of entity_ids."""
+    """Resolve notification_alexa string to list of entity_ids.
+
+    After substring/compound matching, drops any player listed under
+    ``ALEXA_KEYWORD_EXCLUDES`` for that keyword. Excludes are per-keyword, so
+    a bedroom Show can be omitted from broad ``show`` while still matching
+    ``show_11``.
+    """
     value = notification_alexa.strip().lower()
     if not value:
-        # Default: "show" keyword
+        # Default: "show" keyword (same matcher + excludes as explicit "show")
         keyword = ALEXA_DEFAULT_KEYWORD
-        return [p for p in alexa_players if keyword in p]
+        excluded = _excluded_players_for_keyword(keyword)
+        return [
+            p
+            for p in alexa_players
+            if _keyword_matches_alexa_player(keyword, p) and p.lower() not in excluded
+        ]
 
     # Special values
     if value in ("aucun", "none", "off", "disable"):
@@ -811,8 +828,13 @@ def _resolve_alexa_targets(notification_alexa: str, alexa_players: list) -> list
     ]
     matched: list[str] = []
     for keyword in keywords:
+        excluded = _excluded_players_for_keyword(keyword)
         for player in alexa_players:
-            if _keyword_matches_alexa_player(keyword, player) and player not in matched:
+            if (
+                _keyword_matches_alexa_player(keyword, player)
+                and player not in matched
+                and player.lower() not in excluded
+            ):
                 matched.append(player)
     return matched
 
