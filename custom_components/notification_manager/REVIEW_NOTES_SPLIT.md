@@ -5,6 +5,8 @@
 
 Voice review of the coarser `__init__.py` split (PR #16, stacked on PR #15).
 Reviewed against `TODO_BUGS.md` from `test-pr-access` (same-day Tesla session).
+Second pass: cross-module review of config_flow, sensor, services.yaml, manifest,
+strings, and tests/test_notify_handler.py.
 
 ## Bugs from TODO_BUGS.md — status on this branch
 
@@ -121,16 +123,104 @@ compatibility with tests/consumers that historically imported from
 the package is still the old private API. Fine as a transition; consider trimming
 in a follow-up once consumers are migrated.
 
+---
+
+## Deep review — pass 1 (notify / alexa / messaging / bridge_services / jid_utils)
+
+### 5. English Alexa path ignores `notification_alexa` selector — OPEN
+
+In `notify.py`, the FR Alexa gate checks `alexa_selector not in ("aucun", "none", "off", "disable")`,
+but the EN branch only tests `if message_alexa_en:`. A call with `message_alexa_en` set and
+`notification_alexa` = "none" still schedules the EN TTS. Fix: apply the same selector
+gate (or document that EN is independent of the FR selector and always fires).
+
+### 6. Bridge alert Telegram omits `parse_mode` — OPEN
+
+`_async_send_bridge_alert` in `messaging.py` calls `telegram_bot.send_message` without
+`parse_mode`. HA's telegram_bot defaults to markdown, so a message containing an
+unbalanced `_` or `*` (file names, entity_ids, snake_case) is rejected by Telegram
+with "Can't parse entities" and the alert is silently lost — the exact failure mode
+`telegram_text.py` documents for other paths. Fix: pass `parse_mode=PARSE_MODE_PLAIN`
+(or HTML + `escape_html`).
+
+### 7. Unguarded `split(".", 1)` on mobile service — OPEN (minor)
+
+`_async_send_phone_target` does `domain, service = mobile_service.split(".", 1)` with
+no guard. A malformed `phone_targets` entry like `"notify"` (no dot) raises
+`ValueError`, caught by the broad `except` and logged, but the misconfiguration is
+only visible at send time. Validate the `mobile` field shape in the reconfigure
+flow (or at least log a clear config-shape error at load).
+
+### 8. Alexa resolver overwritten per entry — OPEN
+
+`async_setup_entry` always does
+`hass.data[DOMAIN][DATA_ALEXA_RESOLVER] = _make_alexa_resolver(hass, entry)`,
+clobbering any previous entry's resolver. With two config entries the resolver
+points at whichever loaded last. Store resolvers per `entry_id` (e.g. under
+`entry_data`) or document single-entry assumption.
+
+---
+
+## Deep review — pass 2 (config_flow / sensor / services.yaml / manifest / strings / tests)
+
+### 9. Config flow does not validate `phone_targets` JSON structure — OPEN
+
+`_parse_json` only checks JSON syntax. A `phone_targets` object whose values lack
+the required `"mobile"` key (e.g. `{"alice": {}}`) is accepted and saved. The
+failure then surfaces later as `KeyError` inside `_async_send_phone_target` at
+send time. Validate that each value is a dict with a string `mobile` field
+(and optionally an int-or-null `telegram_chat_id`) before saving.
+
+### 10. Reconfigure drops keys not carried forward — OPEN
+
+`async_step_reconfigure_bridge` builds `_reconfigure_data` from the three bridge
+fields, then copies `entry.data` keys absent from that dict. That preserves
+legacy keys, but any key that *is* in `_reconfigure_data` (the bridge trio) is
+fine; the real risk is keys introduced by a future step that a later step forgets
+to re-copy. Today the five steps do carry everything through, but there is no
+guard: a missed `self._reconfigure_data[k] = v` in any step silently drops that
+setting on save. Consider starting from `dict(entry.data)` and overwriting, or
+adding an assertion that the final dict contains every key from the previous
+entry.
+
+### 11. EN Alexa selector gate missing in tests — OPEN
+
+`tests/test_notify_handler.py` covers FR selector disabling (`test_none_values_disable_channels`
+sets `notification_alexa="aucun"` and asserts FR not called) but has no case where
+`message_alexa_en` is set with `notification_alexa` disabled. Add one to lock the
+decision from item 5 (gate or document-and-test independence).
+
+### 12. services.yaml documents EN Alexa as selector-independent — OPEN (docs)
+
+The `message_alexa_en` field description says the message goes to `alexa_en_target`
+"avec un délai de 3 secondes" and never mentions `notification_alexa`. If item 5 is
+fixed by gating EN on the selector, update this description; if EN is intentionally
+independent, state it explicitly so the UI doesn't surprise users.
+
+### 13. Watchdog entities only from const, not from entry data — OPEN (design)
+
+`EntityWatchdog` reads `WATCHDOG_ENTITIES` / `WATCHDOG_CRITICAL_ENTITIES` directly
+from `const` (populated by the private-config import). Nothing in the config flow
+or entry data can override them, unlike phone/WhatsApp/Alexa maps. If the intent
+is that watchdog targets are site-private, fine — but then document it; otherwise
+wire them through `entry.data` like the other maps.
+
+### 14. services.yaml omits `telegram_groups` from notify field docs — OPEN (docs, minor)
+
+The `telegram_group` field says "Nom du groupe Telegram cible (défini dans la
+configuration)" without pointing at the reconfigure step or the
+`TELEGRAM_GROUPS` const. Cross-link it.
+
 ## Suggested next steps for Cursor
 
-1. Fix the five still-open items above (watchdog `@callback`, critical interval
-   mismatch, dead `elif`, unguarded private import, service dedup) — each is small
-   and independently testable.
-2. Consider the `runtime.py` extraction to kill the circular import for good.
-3. Decide on WhatsApp `parse_mode` and photo precedence; document or enforce.
-4. Run `pytest tests/ -v` (160 passed on this branch per PR body) after each
-   change.
-5. The EN Alexa volume-lock audit needs a decision: either bring
-   `_async_send_alexa_en` under the same lock (hard, because it has its own
-   start delay) or document that FR and EN cycles are independent and may
-   interleave volume operations.
+1. Fix the five still-open items from TODO_BUGS.md (watchdog `@callback`, critical
+   interval mismatch, dead `elif`, unguarded private import, service dedup).
+2. Fix the new findings above: EN Alexa selector gate (5), bridge alert
+   `parse_mode` (6), mobile service split guard (7), resolver per-entry (8),
+   phone_targets structure validation (9), reconfigure key-loss guard (10).
+3. Add the missing EN-selector test (11) and align services.yaml docs (12, 14).
+4. Decide watchdog entity sourcing (13) and document.
+5. Consider the `runtime.py` extraction to kill the circular import for good.
+6. Run `pytest tests/ -v` after each change.
+7. EN Alexa volume-lock audit: bring `_async_send_alexa_en` under the same lock
+   or document FR/EN interleaving.
