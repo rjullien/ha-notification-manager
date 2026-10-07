@@ -234,3 +234,115 @@ class TestAlexaDetachment:
             assert len(created) == 1
             release.set()
             await asyncio.gather(*created)
+
+
+class TestWhatsAppWithoutPhone:
+    """WhatsApp must fire from its selector even when message_tel is empty."""
+
+    async def test_whatsapp_fires_with_empty_message_tel(self):
+        created: list = []
+        hass = _make_hass(created)
+        entry = _make_entry()
+        call = _make_call(
+            message_tel="",
+            notification_tel="none",
+            notification_whatsapp="alice",
+        )
+
+        with patch.object(nm, "_async_send_phone", new=AsyncMock()) as phone, \
+             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa:
+            await nm._async_handle_notify(hass, entry, call)
+            await asyncio.gather(*created)
+
+        phone.assert_not_awaited()
+        wa.assert_awaited_once()
+        # Shared message body field — empty string is forwarded as-is.
+        assert wa.call_args.args[2] == ""
+
+    async def test_whatsapp_fires_when_phone_disabled(self):
+        """Classic WhatsApp-only: text in message_tel, phone selector none."""
+        created: list = []
+        hass = _make_hass(created)
+        entry = _make_entry()
+        call = _make_call(
+            message_tel="hello wa",
+            notification_tel="none",
+            notification_whatsapp="alice",
+        )
+
+        with patch.object(nm, "_async_send_phone", new=AsyncMock()) as phone, \
+             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa:
+            await nm._async_handle_notify(hass, entry, call)
+            await asyncio.gather(*created)
+
+        phone.assert_not_awaited()
+        wa.assert_awaited_once()
+        assert wa.call_args.args[2] == "hello wa"
+
+
+class TestSelectorWhitespace:
+    """Channel disable tokens must honor surrounding whitespace."""
+
+    async def test_padded_none_disables_tel_and_whatsapp(self):
+        created: list = []
+        hass = _make_hass(created)
+        entry = _make_entry()
+        call = _make_call(
+            message_tel="hello",
+            message_alexa="bonjour",
+            notification_tel=" none ",
+            notification_whatsapp="  aucun  ",
+            notification_alexa=" off ",
+        )
+
+        with patch.object(nm, "_async_send_phone", new=AsyncMock()) as phone, \
+             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa, \
+             patch.object(nm, "_async_send_alexa", new=AsyncMock()) as alexa:
+            await nm._async_handle_notify(hass, entry, call)
+            await asyncio.gather(*created)
+
+        phone.assert_not_awaited()
+        wa.assert_not_awaited()
+        alexa.assert_not_awaited()
+
+    async def test_padded_whatsapp_target_still_fires(self):
+        created: list = []
+        hass = _make_hass(created)
+        entry = _make_entry()
+        call = _make_call(
+            message_tel="hello",
+            notification_tel="none",
+            notification_whatsapp="  alice  ",
+        )
+
+        with patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa:
+            await nm._async_handle_notify(hass, entry, call)
+            await asyncio.gather(*created)
+
+        wa.assert_awaited_once()
+
+
+class TestMessagingUsesAsyncCreateTask:
+    """Phone / WhatsApp / Telegram must use hass.async_create_task, not ensure_future."""
+
+    async def test_phone_wa_telegram_scheduled_via_hass(self):
+        created: list = []
+        hass = _make_hass(created)
+        entry = _make_entry()
+        call = _make_call(
+            message_tel="hello",
+            notification_tel="alice",
+            notification_whatsapp="alice",
+            telegram_group="family",
+        )
+
+        with patch.object(nm, "_async_send_phone", new=AsyncMock()), \
+             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()), \
+             patch.object(nm, "_async_send_telegram_group", new=AsyncMock()):
+            await nm._async_handle_notify(hass, entry, call)
+            await asyncio.gather(*created)
+
+        # Three messaging channels + no Alexa → exactly 3 hass tasks.
+        # (Previously these used asyncio.ensure_future and bypassed HA's registry.)
+        assert hass.async_create_task.call_count == 3
+        assert len(created) == 3
