@@ -1,5 +1,8 @@
 # Review notes — `cursor/notify-module-split-bf9d`
 
+> **Author:** This in-depth analysis was performed by **Grok Tesla** (Grok, voice session from a Tesla vehicle), on behalf of rjullien.
+> Date: 2026-10-07.
+
 Voice review of the coarser `__init__.py` split (PR #16, stacked on PR #15).
 Reviewed against `TODO_BUGS.md` from `test-pr-access` (same-day Tesla session).
 
