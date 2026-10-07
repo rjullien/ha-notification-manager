@@ -150,6 +150,24 @@ class TestCallTelegram:
         assert data == {"chat_id": 111, "url": "https://x/y.jpg",
                         "parse_mode": "plain_text"}
 
+    async def test_photo_path_wins_when_both_provided(self):
+        """Documented rule: photo_path takes precedence over photo_url."""
+        log: list = []
+        hass = _make_hass(log)
+
+        await nm._async_call_telegram(
+            hass,
+            111,
+            "cap",
+            photo_path="/config/www/local.jpg",
+            photo_url="https://example.com/remote.jpg",
+        )
+
+        _, service, data, _ = log[0]
+        assert service == "send_photo"
+        assert data["file"] == "/config/www/local.jpg"
+        assert "url" not in data
+
     async def test_text_message_with_parse_mode(self):
         log: list = []
         hass = _make_hass(log)

@@ -90,8 +90,4 @@ class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
 
     async def async_shutdown(self) -> None:
         """Cancel polling on unload."""
-        if hasattr(super(), "async_shutdown"):
-            await super().async_shutdown()
-        elif self._unsub_refresh:  # pragma: no cover — very old HA fallback
-            self._unsub_refresh()
-            self._unsub_refresh = None
+        await super().async_shutdown()

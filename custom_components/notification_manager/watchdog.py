@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
@@ -95,7 +95,6 @@ class EntityWatchdog:
             self._unsub_critical = None
         _LOGGER.debug("Entity watchdog stopped")
 
-    @callback
     async def _async_check_standard(self, _now: datetime | None = None) -> None:
         """Check standard monitored entities."""
         await self._async_check_entities(
@@ -104,7 +103,6 @@ class EntityWatchdog:
             "standard",
         )
 
-    @callback
     async def _async_check_critical(self, _now: datetime | None = None) -> None:
         """Check critical monitored entities (faster interval, shorter threshold)."""
         await self._async_check_entities(

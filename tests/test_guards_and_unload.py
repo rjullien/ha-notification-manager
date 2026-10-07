@@ -180,3 +180,64 @@ class TestUnloadEntry:
 
         assert result is False
         assert "entry1" in hass.data[DOMAIN]
+
+
+class TestMultiEntrySetup:
+    """Two config entries must load; domain services register once."""
+
+    def _make_entry(self, entry_id: str):
+        entry = MagicMock()
+        entry.entry_id = entry_id
+        entry.data = {
+            "bridge_url": f"http://bridge-{entry_id}",
+            "bridge_token": "tok",
+            "verify_ssl": True,
+        }
+        entry.async_on_unload = MagicMock()
+        entry.add_update_listener = MagicMock(return_value=lambda: None)
+        return entry
+
+    def _make_hass(self):
+        hass = MagicMock()
+        hass.data = {}
+        registered: set[tuple[str, str]] = set()
+
+        def has_service(domain, service):
+            return (domain, service) in registered
+
+        def async_register(domain, service, handler, schema=None, supports_response=None):
+            key = (domain, service)
+            assert key not in registered, f"duplicate register: {key}"
+            registered.add(key)
+
+        hass.services.has_service = MagicMock(side_effect=has_service)
+        hass.services.async_register = MagicMock(side_effect=async_register)
+        hass.config_entries.async_forward_entry_setups = AsyncMock()
+        return hass, registered
+
+    async def test_two_entries_load_services_once(self):
+        hass, registered = self._make_hass()
+        entry1 = self._make_entry("entry1")
+        entry2 = self._make_entry("entry2")
+        watchdog = MagicMock()
+
+        with patch.object(nm, "async_setup_watchdog", return_value=watchdog):
+            assert await nm.async_setup_entry(hass, entry1) is True
+            assert await nm.async_setup_entry(hass, entry2) is True
+
+        assert "entry1" in hass.data[DOMAIN]
+        assert "entry2" in hass.data[DOMAIN]
+        # Per-entry resolvers, not a single domain-level clobber key
+        assert nm.DATA_ALEXA_RESOLVER in hass.data[DOMAIN]["entry1"]
+        assert nm.DATA_ALEXA_RESOLVER in hass.data[DOMAIN]["entry2"]
+        assert nm.DATA_ALEXA_RESOLVER not in hass.data[DOMAIN]
+        # Shared house-level state still at domain root
+        assert nm.DATA_ALEXA_LOCK in hass.data[DOMAIN]
+        assert nm.DATA_ALEXA_EMISSIONS in hass.data[DOMAIN]
+
+        assert registered == {
+            (DOMAIN, "notify"),
+            (DOMAIN, "recent_alexa_emissions"),
+            (DOMAIN, "whatsapp_bridge_logs"),
+            (DOMAIN, "whatsapp_bridge_restart"),
+        }

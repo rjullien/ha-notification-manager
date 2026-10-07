@@ -32,6 +32,8 @@ notify:
       description: >
         Message TTS envoyé à l'Echo anglophone configuré
         (alexa_en_target), avec un délai de 3 secondes.
+        DEPRECATED / unused by the maintainer — left as-is for
+        compatibility; candidate for later removal.
       example: "Good night everyone!"
       required: false
       selector:
@@ -78,8 +80,9 @@ notify:
     telegram_group:
       name: Groupe Telegram
       description: >
-        Nom du groupe Telegram cible (défini dans la configuration).
-        Le message sera envoyé au groupe au lieu des DMs individuels.
+        Nom du groupe Telegram cible, clé dans TELEGRAM_GROUPS
+        (const / reconfigure → telegram_groups). Le message est
+        envoyé au chat_id associé plutôt qu'en DM individuel.
       example: "family"
       required: false
       default: ""
@@ -91,6 +94,8 @@ notify:
       description: >
         Chemin local vers une image à envoyer via Telegram (send_photo).
         Compatible avec les DMs individuels et les groupes.
+        Si photo_path et photo_url sont tous les deux renseignés,
+        photo_path gagne (photo_url est ignoré).
       example: "/config/www/snapshots/camera.jpg"
       required: false
       default: ""
@@ -101,7 +106,8 @@ notify:
       name: Photo (URL)
       description: >
         URL d'une image à envoyer via Telegram.
-        Alternative à photo_path pour les images distantes.
+        Utilisée seulement si photo_path est vide ; sinon photo_path
+        a la priorité.
       example: "https://example.com/snapshot.jpg"
       required: false
       default: ""
@@ -111,7 +117,8 @@ notify:
     parse_mode:
       name: Parse mode Telegram
       description: >
-        Mode de parsing pour les messages Telegram.
+        Mode de parsing pour les messages Telegram uniquement
+        (pas WhatsApp — le pont envoie toujours du texte brut).
         Permet le formatage HTML ou Markdown dans les messages.
         Laisser vide envoie le message en texte brut : les "_" et "*"
         (entity_ids, libellés snake_case, noms de fichiers) sont alors

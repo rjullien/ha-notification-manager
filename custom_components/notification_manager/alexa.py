@@ -18,7 +18,7 @@ from .const import (
     ALEXA_KEYWORD_EXCLUDES,
     DOMAIN,
 )
-from .notify import _get_runtime_config
+from .runtime import _get_runtime_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,8 +26,10 @@ _LOGGER = logging.getLogger(__name__)
 # other key as a config entry when deciding whether to remove the services.
 DATA_ALEXA_LOCK = "_alexa_lock"
 DATA_ALEXA_EMISSIONS = "_alexa_emissions"
-# Lets a consumer ask "would this keyword actually reach a speaker?" instead of
-# duplicating the resolution rules and drifting from them.
+# Per-entry key under hass.data[DOMAIN][entry_id]: lets a consumer ask
+# "would this keyword actually reach a speaker?" without duplicating rules.
+# Do not store a single domain-level resolver — the last-loaded entry would
+# clobber earlier ones when multiple config entries are present.
 DATA_ALEXA_RESOLVER = "_alexa_resolver"
 # Last resting volume per media_player, kept across TTS cycles. Alexa Media
 # often leaves ``volume_level`` stuck at the TTS level after a restore

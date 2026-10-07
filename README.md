@@ -66,7 +66,7 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 |-------|------|---------|-------------|
 | `message_tel` | string | `""` | Message for push/Telegram/WhatsApp |
 | `message_alexa` | string | `""` | TTS message for Alexa (primary language) |
-| `message_alexa_en` | string | `""` | TTS message for English Echo devices (sent after 3s delay) |
+| `message_alexa_en` | string | `""` | TTS for English Echo (`alexa_en_target`, 3s delay). **Unused by the maintainer** — left as-is; candidate for later removal |
 | `notification_tel` | string | `"all"` | Phone targets — person names (space-separated) or `"none"` |
 | `notification_whatsapp` | string | `"none"` | WhatsApp targets — person names (space-separated) or `"none"` |
 | `notification_alexa` | string | `""` | Alexa targets — keywords matched against entity IDs (space-separated) or `"aucun"` |
@@ -83,6 +83,10 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 - Space-separated **person names** (case-insensitive)
 - `"none"` / `"aucun"` / empty → skip
 - Names are resolved against `WHATSAPP_CONTACTS` dict
+- **Plain text only** — `parse_mode` is ignored for WhatsApp (Telegram-only)
+
+**Photos** (`photo_path` / `photo_url`):
+- Telegram only. If both are set, **`photo_path` wins** (`photo_url` ignored).
 
 **Alexa** (`notification_alexa`) — pattern matching:
 - Space-separated **keywords** matched as substrings against `media_player.*` entity IDs
@@ -218,7 +222,7 @@ WATCHDOG_TELEGRAM_CHAT_IDS = [123456789]
 ```python
 WATCHDOG_CHECK_INTERVAL_MINUTES = 60       # Standard tier interval
 WATCHDOG_THRESHOLD_MINUTES = 15            # Standard tier threshold
-WATCHDOG_CRITICAL_INTERVAL_MINUTES = 10    # Critical tier interval
+WATCHDOG_CRITICAL_INTERVAL_MINUTES = 5     # Critical tier interval
 WATCHDOG_CRITICAL_THRESHOLD_MINUTES = 5    # Critical tier threshold
 WATCHDOG_COOLDOWN_HOURS = 6                # Hours between re-alerts
 ```

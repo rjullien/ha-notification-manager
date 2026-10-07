@@ -67,6 +67,17 @@ def _bridge_schema(url: str, token: str, verify_ssl: bool) -> vol.Schema:
     )
 
 
+def _seed_reconfigure_data(entry_data: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    """Start reconfigure from a full copy of entry.data, then overwrite.
+
+    Building a fresh dict and only copying "missing" keys risks silently
+    dropping settings if a future step forgets to re-copy a key it also writes.
+    """
+    data = dict(entry_data)
+    data.update(overrides)
+    return data
+
+
 # ── Bridge validation ─────────────────────────────────────────────────────────
 
 async def _async_validate_bridge(
@@ -189,15 +200,14 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         error,
                     )
 
-            self._reconfigure_data: dict[str, Any] = {
-                CONF_BRIDGE_URL: bridge_url,
-                CONF_BRIDGE_TOKEN: bridge_token,
-                CONF_VERIFY_SSL: verify_ssl,
-            }
-            # Carry forward all existing data; step results will overwrite
-            for k, v in entry.data.items():
-                if k not in self._reconfigure_data:
-                    self._reconfigure_data[k] = v
+            self._reconfigure_data = _seed_reconfigure_data(
+                entry.data,
+                **{
+                    CONF_BRIDGE_URL: bridge_url,
+                    CONF_BRIDGE_TOKEN: bridge_token,
+                    CONF_VERIFY_SSL: verify_ssl,
+                },
+            )
             return await self.async_step_reconfigure_phone()
 
         return self.async_show_form(

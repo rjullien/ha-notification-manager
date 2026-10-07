@@ -17,7 +17,7 @@ from .const import (
     DEFAULT_VERIFY_SSL,
 )
 from .jid_utils import jid_to_phone
-from .notify import _get_runtime_config
+from .runtime import _get_runtime_config
 from .telegram_text import PARSE_MODE_PLAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -99,10 +99,11 @@ async def _async_call_telegram(
     effective_parse_mode = parse_mode or PARSE_MODE_PLAIN
 
     if photo_path or photo_url:
+        # Explicit rule: when both are set, photo_path wins (photo_url ignored).
         photo_data: dict = {"chat_id": chat_id}
         if photo_path:
             photo_data["file"] = photo_path
-        elif photo_url:
+        else:
             photo_data["url"] = photo_url
         if message:
             photo_data["caption"] = message
@@ -174,7 +175,12 @@ async def _async_send_whatsapp(
     bridge_token: str,
     verify_ssl: bool = DEFAULT_VERIFY_SSL,
 ) -> None:
-    """Send WhatsApp messages via whatsmeow-bridge REST API (recipients in parallel)."""
+    """Send WhatsApp messages via whatsmeow-bridge REST API (recipients in parallel).
+
+    WhatsApp is plain-text only: the bridge payload is ``{phone, message}`` with
+    no Telegram-style ``parse_mode``. Callers' ``parse_mode`` applies to Telegram
+    channels only.
+    """
     if not bridge_url:
         _LOGGER.error("WhatsApp bridge URL not configured")
         return
@@ -281,14 +287,22 @@ def _resolve_whatsapp_targets(notification_whatsapp: str, whatsapp_contacts: dic
 
 
 async def _async_send_bridge_alert(hass: HomeAssistant, entry: ConfigEntry, message: str) -> None:
-    """Alert admins when the WhatsApp bridge is down."""
+    """Alert admins when the WhatsApp bridge is down.
+
+    Always send ``parse_mode=plain_text``: omitting it lets telegram_bot default
+    to markdown, so entity_ids / underscores in the alert body can fail silently.
+    """
     cfg = _get_runtime_config(entry)
     for chat_id in cfg["bridge_alert_chat_ids"]:
         try:
             await hass.services.async_call(
                 "telegram_bot",
                 "send_message",
-                {"chat_id": chat_id, "message": message},
+                {
+                    "chat_id": chat_id,
+                    "message": message,
+                    "parse_mode": PARSE_MODE_PLAIN,
+                },
                 blocking=True,
             )
         except Exception as exc:  # noqa: BLE001

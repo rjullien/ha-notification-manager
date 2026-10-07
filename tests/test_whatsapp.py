@@ -210,6 +210,28 @@ class TestBridgeAlert:
 
         assert log == [(111, True), (222, True)]
 
+    async def test_bridge_alert_sends_plain_text_parse_mode(self):
+        """Bridge alerts must set parse_mode so underscores do not break markdown."""
+        from notification_manager.telegram_text import PARSE_MODE_PLAIN
+
+        log: list = []
+        hass = MagicMock()
+
+        async def record(domain, service, data, blocking=False):
+            log.append(dict(data))
+
+        hass.services.async_call = AsyncMock(side_effect=record)
+        entry = MagicMock()
+        entry.data = {"bridge_alert_chat_ids": [111]}
+
+        await nm._async_send_bridge_alert(
+            hass, entry, "sensor.irrigation_valve_1 unavailable"
+        )
+
+        assert log, "no telegram_bot call recorded"
+        assert log[0]["parse_mode"] == PARSE_MODE_PLAIN
+        assert "parse_mode" in log[0]
+
     async def test_one_failing_chat_does_not_stop_others(self):
         sent: list = []
         hass = MagicMock()
