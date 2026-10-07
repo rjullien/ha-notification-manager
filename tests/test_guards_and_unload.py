@@ -10,7 +10,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
-    import notification_manager.__init__ as nm
+    import notification_manager as nm
+    import notification_manager.bridge_services as bridge_services
+    import notification_manager.notify as notify
     from notification_manager.alexa_emissions import AlexaEmissionLog
     from notification_manager.const import DOMAIN
 
@@ -27,7 +29,7 @@ class TestRequireAdmin:
         call = MagicMock()
         call.context.user_id = None
 
-        await nm._async_require_admin(hass, call)  # must not raise
+        await bridge_services._async_require_admin(hass, call)  # must not raise
 
         hass.auth.async_get_user.assert_not_called()
 
@@ -38,7 +40,7 @@ class TestRequireAdmin:
         call = MagicMock()
         call.context.user_id = "user-1"
 
-        await nm._async_require_admin(hass, call)  # must not raise
+        await bridge_services._async_require_admin(hass, call)  # must not raise
 
     async def test_non_admin_user_rejected(self):
         hass = MagicMock()
@@ -48,7 +50,7 @@ class TestRequireAdmin:
         call.context.user_id = "user-2"
 
         with pytest.raises(Unauthorized):
-            await nm._async_require_admin(hass, call)
+            await bridge_services._async_require_admin(hass, call)
 
     async def test_unknown_user_rejected(self):
         """Stale/unknown user_id → rejected, never allowed by default."""
@@ -58,7 +60,7 @@ class TestRequireAdmin:
         call.context.user_id = "ghost"
 
         with pytest.raises(Unauthorized):
-            await nm._async_require_admin(hass, call)
+            await bridge_services._async_require_admin(hass, call)
 
 
 class TestRunLogged:
@@ -69,7 +71,7 @@ class TestRunLogged:
             raise ValueError("kaboom")
 
         with caplog.at_level(logging.ERROR):
-            await nm._run_logged(boom(), "Test channel")  # must not raise
+            await notify._run_logged(boom(), "Test channel")  # must not raise
 
         assert "Test channel failed" in caplog.text
         assert "kaboom" in caplog.text
@@ -79,7 +81,7 @@ class TestRunLogged:
             return 42
 
         with caplog.at_level(logging.ERROR):
-            await nm._run_logged(fine(), "Test channel")
+            await notify._run_logged(fine(), "Test channel")
 
         assert "failed" not in caplog.text
 
@@ -92,7 +94,7 @@ class TestRuntimeConfig:
         entry = MagicMock()
         entry.data = {"alexa_tts_volume": 0.0, "alexa_post_tts_delay": 0}
 
-        cfg = nm._get_runtime_config(entry)
+        cfg = notify._get_runtime_config(entry)
 
         assert cfg["alexa_tts_volume"] == 0.0
         assert cfg["alexa_post_tts_delay"] == 0
@@ -101,16 +103,16 @@ class TestRuntimeConfig:
         entry = MagicMock()
         entry.data = {}
 
-        cfg = nm._get_runtime_config(entry)
+        cfg = notify._get_runtime_config(entry)
 
-        assert cfg["alexa_tts_volume"] == nm._CONST_ALEXA_TTS_VOLUME
-        assert cfg["alexa_post_tts_delay"] == nm._CONST_ALEXA_POST_TTS_DELAY
+        assert cfg["alexa_tts_volume"] == notify._CONST_ALEXA_TTS_VOLUME
+        assert cfg["alexa_post_tts_delay"] == notify._CONST_ALEXA_POST_TTS_DELAY
 
     def test_entry_data_overrides_const(self):
         entry = MagicMock()
         entry.data = {"phone_targets": {"x": {"mobile": "notify.x"}}}
 
-        cfg = nm._get_runtime_config(entry)
+        cfg = notify._get_runtime_config(entry)
 
         assert cfg["phone_targets"] == {"x": {"mobile": "notify.x"}}
 

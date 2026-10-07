@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
-    import notification_manager.__init__ as nm
+    import notification_manager.messaging as nm
     from notification_manager.const import BRIDGE_RETRIES
 
 
