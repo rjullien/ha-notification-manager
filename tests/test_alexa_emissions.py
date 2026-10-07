@@ -281,10 +281,39 @@ class TestAlexaResolverApi:
 
     def test_registered_in_hass_data(self):
         hass = _make_hass()
-        hass.data = {DOMAIN: {}}
         entry = _make_entry(["media_player.kitchen_echo"])
-        hass.data[DOMAIN][DATA_ALEXA_RESOLVER] = _make_alexa_resolver(hass, entry)
+        entry.entry_id = "entry-a"
+        hass.data = {DOMAIN: {entry.entry_id: {}}}
+        hass.data[DOMAIN][entry.entry_id][DATA_ALEXA_RESOLVER] = _make_alexa_resolver(
+            hass, entry
+        )
 
-        resolver = hass.data[DOMAIN][DATA_ALEXA_RESOLVER]
+        resolver = hass.data[DOMAIN][entry.entry_id][DATA_ALEXA_RESOLVER]
         assert callable(resolver)
         assert resolver("kitchen") == ["media_player.kitchen_echo"]
+
+    def test_resolvers_are_per_entry(self):
+        """Two entries keep independent resolvers (no domain-level clobber)."""
+        hass = _make_hass()
+        entry_a = _make_entry(["media_player.kitchen_echo"])
+        entry_a.entry_id = "entry-a"
+        entry_b = _make_entry(["media_player.bedroom_echo"])
+        entry_b.entry_id = "entry-b"
+        hass.data = {
+            DOMAIN: {
+                entry_a.entry_id: {
+                    DATA_ALEXA_RESOLVER: _make_alexa_resolver(hass, entry_a)
+                },
+                entry_b.entry_id: {
+                    DATA_ALEXA_RESOLVER: _make_alexa_resolver(hass, entry_b)
+                },
+            }
+        }
+
+        assert hass.data[DOMAIN][entry_a.entry_id][DATA_ALEXA_RESOLVER]("kitchen") == [
+            "media_player.kitchen_echo"
+        ]
+        assert hass.data[DOMAIN][entry_b.entry_id][DATA_ALEXA_RESOLVER]("bedroom") == [
+            "media_player.bedroom_echo"
+        ]
+        assert hass.data[DOMAIN][entry_a.entry_id][DATA_ALEXA_RESOLVER]("bedroom") == []

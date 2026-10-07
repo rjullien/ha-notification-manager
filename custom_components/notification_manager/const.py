@@ -114,7 +114,7 @@ WATCHDOG_CRITICAL_THRESHOLD_MINUTES = 5
 WATCHDOG_CHECK_INTERVAL_MINUTES = 60
 
 # How often to check critical entities (minutes)
-WATCHDOG_CRITICAL_INTERVAL_MINUTES = 10
+WATCHDOG_CRITICAL_INTERVAL_MINUTES = 5
 
 # Hours between repeated alerts for the same entity
 WATCHDOG_COOLDOWN_HOURS = 6
@@ -145,28 +145,42 @@ PLATFORMS = ["sensor"]
 # Fallback: also try .const_private (legacy, inside component dir).
 # Only UPPERCASE names are imported, so stray imports (os, json, …) in the
 # private file can never shadow this module's machinery.
+# Errors while loading the private file are logged; defaults stay in place so a
+# broken private module never bricks the whole integration.
 
 import importlib.util as _ilu
+import logging as _logging
 import os as _os
+
+_LOGGER_CONST = _logging.getLogger(__name__)
 
 _PRIVATE_PATH = _os.path.join(
     _os.environ.get("HASS_CONFIG", "/config"),
     "notification_manager_private.py",
 )
 
-if _os.path.isfile(_PRIVATE_PATH):
-    _spec = _ilu.spec_from_file_location("_nm_private", _PRIVATE_PATH)
-    _mod = _ilu.module_from_spec(_spec)
-    _spec.loader.exec_module(_mod)
-    for _name in dir(_mod):
-        if _name.isupper():
-            globals()[_name] = getattr(_mod, _name)
-else:
-    try:
-        from . import const_private as _mod_legacy
-
-        for _name in dir(_mod_legacy):
+try:
+    if _os.path.isfile(_PRIVATE_PATH):
+        _spec = _ilu.spec_from_file_location("_nm_private", _PRIVATE_PATH)
+        if _spec is None or _spec.loader is None:
+            raise ImportError(f"Cannot load private config from {_PRIVATE_PATH}")
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        for _name in dir(_mod):
             if _name.isupper():
-                globals()[_name] = getattr(_mod_legacy, _name)
-    except ImportError:
-        pass
+                globals()[_name] = getattr(_mod, _name)
+    else:
+        try:
+            from . import const_private as _mod_legacy
+
+            for _name in dir(_mod_legacy):
+                if _name.isupper():
+                    globals()[_name] = getattr(_mod_legacy, _name)
+        except ImportError:
+            pass
+except Exception as _private_exc:  # noqa: BLE001
+    _LOGGER_CONST.error(
+        "Failed to load private config from %s — keeping defaults: %s",
+        _PRIVATE_PATH,
+        _private_exc,
+    )

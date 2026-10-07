@@ -157,3 +157,45 @@ class TestBridgeValidationVerifySsl:
             result = await cf._async_validate_bridge(hass, "http://bridge:8080", "tok")
 
         assert result == "unknown"
+
+
+class TestReconfigurePreservesEntryData:
+    """Reconfigure must start from dict(entry.data) so keys are never dropped."""
+
+    def _import(self):
+        with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
+            for name in (
+                "notification_manager.config_flow",
+                "notification_manager.const",
+            ):
+                if name in sys.modules:
+                    del sys.modules[name]
+            import notification_manager.config_flow as cf
+        return cf
+
+    def test_seed_starts_from_full_entry_data_then_overwrites(self):
+        cf = self._import()
+        entry_data = {
+            "bridge_url": "http://old",
+            "bridge_token": "old-tok",
+            "verify_ssl": True,
+            "phone_targets": {"alice": {"mobile": "notify.alice"}},
+            "telegram_groups": {"family": -100},
+            "custom_future_key": "keep-me",
+        }
+
+        seeded = cf._seed_reconfigure_data(
+            entry_data,
+            bridge_url="http://new",
+            bridge_token="new-tok",
+            verify_ssl=False,
+        )
+
+        assert seeded["bridge_url"] == "http://new"
+        assert seeded["bridge_token"] == "new-tok"
+        assert seeded["verify_ssl"] is False
+        assert seeded["phone_targets"] == {"alice": {"mobile": "notify.alice"}}
+        assert seeded["telegram_groups"] == {"family": -100}
+        assert seeded["custom_future_key"] == "keep-me"
+        # Original entry dict must not be mutated
+        assert entry_data["bridge_url"] == "http://old"

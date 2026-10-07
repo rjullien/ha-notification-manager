@@ -5,10 +5,23 @@ Supports Alexa TTS, phone/Telegram notifications, and WhatsApp via
 the whatsmeow-bridge REST API.
 
 Module map (coarser split):
-- ``notify`` — service handler + runtime config helpers
+- ``runtime`` — shared helpers (no sibling imports; breaks import cycles)
+- ``notify`` — service handler
 - ``alexa`` — FR/EN TTS, volume stack, emission helpers, resolvers
 - ``messaging`` — phone / Telegram / WhatsApp (+ jid_utils)
 - ``bridge_services`` — admin bridge logs/restart + recent emissions
+
+Multi-entry notes
+-----------------
+Several config entries may load. Domain services are registered once
+(``has_service`` guard) and bind dynamically to a primary loaded entry.
+Per-entry state (resolver, watchdog, coordinator, bridge credentials in
+``entry.data``) lives under ``hass.data[DOMAIN][entry.entry_id]``.
+
+Shared across all entries (intentional):
+- ``DATA_ALEXA_LOCK`` — one volume save/restore lock for the house
+- ``DATA_ALEXA_EMISSIONS`` — one in-memory emission log
+- ``DATA_ALEXA_LAST_GOOD_VOLUMES`` — resting-volume cache per media_player
 """
 from __future__ import annotations
 
@@ -67,9 +80,10 @@ from .messaging import (
     _resolve_phone_targets,
     _resolve_whatsapp_targets,
 )
-from .notify import (
-    _async_handle_notify,
+from .notify import _async_handle_notify
+from .runtime import (
     _entry_verify_ssl,
+    _get_primary_entry,
     _get_runtime_config,
     _run_logged,
 )
@@ -103,9 +117,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_BRIDGE_URL: entry.data.get(CONF_BRIDGE_URL, ""),
         CONF_BRIDGE_TOKEN: entry.data.get(CONF_BRIDGE_TOKEN, ""),
         CONF_VERIFY_SSL: _entry_verify_ssl(entry),
+        # Per-entry resolver — do not store a single domain-level resolver that
+        # the last-loaded entry would clobber.
+        DATA_ALEXA_RESOLVER: _make_alexa_resolver(hass, entry),
     }
     # Serialises Alexa volume save→TTS→restore cycles so overlapping notify
     # calls can't capture the TTS volume as the "original" one.
+    # Shared across entries: one lock / emission log / volume cache for the house.
     hass.data[DOMAIN].setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
     hass.data[DOMAIN].setdefault(DATA_ALEXA_LAST_GOOD_VOLUMES, {})
     # In-memory only, shared by all entries: consumers ask "did a speaker in
@@ -117,7 +135,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             retention=timedelta(minutes=ALEXA_EMISSION_RETENTION_MINUTES),
         ),
     )
-    hass.data[DOMAIN][DATA_ALEXA_RESOLVER] = _make_alexa_resolver(hass, entry)
 
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -127,16 +144,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # until Home Assistant restarts.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
-    # Register the notification service
-    async def handle_notify(call: ServiceCall) -> None:
-        await _async_handle_notify(hass, entry, call)
+    # Domain-level notify: register once; handler binds to a live primary entry.
+    if not hass.services.has_service(DOMAIN, SERVICE_NOTIFY):
+        async def handle_notify(call: ServiceCall) -> None:
+            active = _get_primary_entry(hass)
+            if active is None:
+                _LOGGER.error("notify called but no config entry is loaded")
+                return
+            await _async_handle_notify(hass, active, call)
 
-    hass.services.async_register(
-        DOMAIN,
-        SERVICE_NOTIFY,
-        handle_notify,
-        schema=SERVICE_NOTIFY_SCHEMA,
-    )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_NOTIFY,
+            handle_notify,
+            schema=SERVICE_NOTIFY_SCHEMA,
+        )
 
     async_register_bridge_services(hass, entry)
 
@@ -190,7 +212,7 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 # Re-exports kept for tests and external consumers that historically imported
 # symbols from ``notification_manager.__init__``. Prefer importing from the
-# owning module (``alexa``, ``messaging``, ``notify``) for new code.
+# owning module (``alexa``, ``messaging``, ``runtime``, ``notify``) for new code.
 __all__ = [
     "DATA_ALEXA_EMISSIONS",
     "DATA_ALEXA_LAST_GOOD_VOLUMES",
@@ -214,6 +236,7 @@ __all__ = [
     "_async_send_whatsapp_to_jid",
     "_entry_verify_ssl",
     "_get_emission_log",
+    "_get_primary_entry",
     "_get_runtime_config",
     "_make_alexa_resolver",
     "_resolve_alexa_targets",
