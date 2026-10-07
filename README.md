@@ -5,6 +5,8 @@
 
 A production-grade Home Assistant custom component for multi-channel notifications. Supports **Alexa TTS** (with automatic volume save/restore), **mobile push**, **Telegram**, and **WhatsApp** via [whatsmeow-bridge](https://github.com/tulir/whatsmeow).
 
+> **Historic note:** this is the first version of this repository that was modified directly by Grok, from voice, from inside a Tesla. Bug fixes, migration notes and documentation were produced and pushed conversationally without a local checkout.
+
 ---
 
 ## Features
@@ -105,7 +107,7 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 ### Basic notification — all channels
 
 ```yaml
-service: notification_manager.notify
+service: notification_managernotify
 data:
   message_tel: "The delivery has arrived"
   message_alexa: "Your delivery is here!"
@@ -116,7 +118,7 @@ data:
 ### Specific person, push + WhatsApp
 
 ```yaml
-service: notification_manager.notify
+service: notification_managernotify
 data:
   message_tel: "Your package is at the door"
   notification_tel: "John"
@@ -126,7 +128,7 @@ data:
 ### Alexa announcement in specific rooms
 
 ```yaml
-service: notification_manager.notify
+service: notification_managernotify
 data:
   message_alexa: "Dinner is ready!"
   notification_alexa: "kitchen bedroom"
