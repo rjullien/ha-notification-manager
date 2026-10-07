@@ -77,6 +77,28 @@ class TestSendToJid:
         assert kwargs["json"] == {"phone": "j@s", "message": "coucou"}
         assert kwargs["headers"]["Authorization"] == "Bearer t"
 
+    async def test_individual_jid_stripped_to_phone(self):
+        session = MagicMock()
+        session.post = MagicMock(return_value=_response_cm(200))
+
+        await nm._async_send_whatsapp_to_jid(
+            session, "http://b/send", {}, "33600000001@s.whatsapp.net", "hi"
+        )
+
+        assert session.post.call_args.kwargs["json"]["phone"] == "33600000001"
+
+    async def test_group_jid_passed_through(self):
+        """Group JIDs (@g.us) must reach GoWA unchanged."""
+        session = MagicMock()
+        session.post = MagicMock(return_value=_response_cm(200))
+        group = "120363000000000000@g.us"
+
+        await nm._async_send_whatsapp_to_jid(
+            session, "http://b/send", {}, group, "hi"
+        )
+
+        assert session.post.call_args.kwargs["json"]["phone"] == group
+
 
 class TestSendWhatsapp:
     """Orchestration: parallel recipients + single aggregated alert."""

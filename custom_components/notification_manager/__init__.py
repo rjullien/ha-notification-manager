@@ -21,6 +21,7 @@ from homeassistant.helpers import config_validation as cv
 
 from .alexa_emissions import AlexaEmissionLog
 from .bridge_http import async_close_bridge_sessions, async_get_bridge_session
+from .jid_utils import jid_to_phone
 from .telegram_text import PARSE_MODE_PLAIN
 from .watchdog import async_setup_watchdog, EntityWatchdog
 from .const import (
@@ -397,7 +398,12 @@ async def _async_handle_notify(
     if not isinstance(context_id, str):
         context_id = None
 
-    if message_alexa and notification_alexa.strip().lower() not in (
+    # Normalize channel selectors consistently (strip + lower) before gating.
+    tel_selector = notification_tel.strip().lower()
+    wa_selector = notification_whatsapp.strip().lower()
+    alexa_selector = notification_alexa.strip().lower()
+
+    if message_alexa and alexa_selector not in (
         "aucun", "none", "off", "disable"
     ):
         hass.async_create_task(
@@ -421,11 +427,12 @@ async def _async_handle_notify(
 
     # Phone, WhatsApp and Telegram group run concurrently and are awaited so
     # automations calling the service in blocking mode get delivery feedback.
+    # Use hass.async_create_task (same as Alexa) so HA tracks/cancels these on unload.
     tasks: list[asyncio.Task] = []
 
-    if message_tel and notification_tel.lower() not in ("aucun", "none"):
+    if message_tel and tel_selector not in ("aucun", "none"):
         tasks.append(
-            asyncio.ensure_future(
+            hass.async_create_task(
                 _async_send_phone(
                     hass, entry, message_tel, notification_tel,
                     parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
@@ -433,11 +440,16 @@ async def _async_handle_notify(
             )
         )
 
-    if message_tel and notification_whatsapp.lower() not in ("none", "aucun", ""):
+    # WhatsApp is gated on its selector alone — not on message_tel truthiness —
+    # so a WhatsApp-only notify is not skipped when phone/Telegram text is empty.
+    # Message source: reuse message_tel (shared push/Telegram/WhatsApp body per
+    # schema/README; there is no separate message_whatsapp field). An empty
+    # message_tel is forwarded as an empty string to the bridge.
+    if wa_selector not in ("none", "aucun", ""):
         bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
         bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
         tasks.append(
-            asyncio.ensure_future(
+            hass.async_create_task(
                 _async_send_whatsapp(
                     hass, entry, message_tel, notification_whatsapp,
                     bridge_url, bridge_token, _entry_verify_ssl(entry),
@@ -448,7 +460,7 @@ async def _async_handle_notify(
     if telegram_group:
         if message_tel or photo_path or photo_url:
             tasks.append(
-                asyncio.ensure_future(
+                hass.async_create_task(
                     _async_send_telegram_group(
                         hass, entry, message_tel, telegram_group,
                         parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
@@ -1039,8 +1051,8 @@ async def _async_send_whatsapp_to_jid(
 ) -> bool:
     """Send one WhatsApp message with retries. Returns True on success."""
     last_error: Exception | None = None
-    # Convert JID to phone number for GoWA bridge
-    phone = jid.replace("@s.whatsapp.net", "") if "@s.whatsapp.net" in jid else jid
+    # Convert JID to phone number for GoWA bridge (groups @g.us pass through).
+    phone = jid_to_phone(jid)
 
     for attempt in range(1, BRIDGE_RETRIES + 1):
         try:
