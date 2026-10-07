@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
-    from notification_manager.__init__ import (
+    from notification_manager.alexa import (
         DATA_ALEXA_LAST_GOOD_VOLUMES,
         DATA_ALEXA_LOCK,
         _async_send_alexa,

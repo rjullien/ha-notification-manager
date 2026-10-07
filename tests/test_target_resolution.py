@@ -25,14 +25,16 @@ with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}
 # Resolver helpers — imported once, no global-patch needed (functions now take
 # their data as explicit arguments instead of reading module-level globals).
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
-    if "notification_manager.__init__" in sys.modules:
-        del sys.modules["notification_manager.__init__"]
-    import notification_manager.__init__ as _nm
-    from notification_manager.__init__ import (
+    import notification_manager.alexa as _alexa
+    from notification_manager.messaging import (
         _resolve_phone_targets,
-        _resolve_alexa_targets,
         _resolve_whatsapp_targets,
     )
+    from notification_manager.alexa import (
+        _resolve_alexa_targets,
+    )
+    # Patch surface for Alexa keyword constants (looked up in alexa module).
+    _nm = _alexa
 
 _SAMPLE_PHONE_DEFAULTS = ["rene", "nicole"]
 _SAMPLE_ALEXA_PLAYERS = [

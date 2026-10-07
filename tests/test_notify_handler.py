@@ -1,9 +1,10 @@
 """Tests for _async_handle_notify — routing, detachment, verify_ssl propagation.
 
-Note: patches use patch.object on a kept module reference. String-target
-patching ("notification_manager.__init__.X") silently re-imports a fresh copy
-of the module after conftest's patch.dict restores sys.modules, and would
-patch the wrong module object.
+Patch strategy after the module split: ``_async_handle_notify`` lives in
+``notify`` and calls ``alexa`` / ``messaging`` by module attribute, so channel
+send mocks must be applied on those modules (patch where used). Keep a module
+reference — string-target patching can re-import the wrong object after
+conftest's patch.dict restores sys.modules.
 """
 import asyncio
 import sys
@@ -15,7 +16,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
-    import notification_manager.__init__ as nm
+    import notification_manager as nm
+    import notification_manager.alexa as alexa
+    import notification_manager.messaging as messaging
+    import notification_manager.notify as notify
 
 
 def _make_call(**overrides):
@@ -77,19 +81,19 @@ class TestChannelRouting:
             telegram_group="family",
         )
 
-        with patch.object(nm, "_async_send_phone", new=AsyncMock()) as phone, \
-             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa, \
-             patch.object(nm, "_async_send_telegram_group", new=AsyncMock()) as group, \
-             patch.object(nm, "_async_send_alexa", new=AsyncMock()) as alexa, \
-             patch.object(nm, "_async_send_alexa_en_delayed", new=AsyncMock()) as alexa_en:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_phone", new=AsyncMock()) as phone, \
+             patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()) as wa, \
+             patch.object(messaging, "_async_send_telegram_group", new=AsyncMock()) as group, \
+             patch.object(alexa, "_async_send_alexa", new=AsyncMock()) as send_alexa, \
+             patch.object(alexa, "_async_send_alexa_en_delayed", new=AsyncMock()) as send_alexa_en:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         phone.assert_awaited_once()
         wa.assert_awaited_once()
         group.assert_awaited_once()
-        alexa.assert_awaited_once()
-        alexa_en.assert_awaited_once()
+        send_alexa.assert_awaited_once()
+        send_alexa_en.assert_awaited_once()
 
     async def test_none_values_disable_channels(self):
         created: list = []
@@ -103,15 +107,15 @@ class TestChannelRouting:
             notification_alexa="aucun",
         )
 
-        with patch.object(nm, "_async_send_phone", new=AsyncMock()) as phone, \
-             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa, \
-             patch.object(nm, "_async_send_alexa", new=AsyncMock()) as alexa:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_phone", new=AsyncMock()) as phone, \
+             patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()) as wa, \
+             patch.object(alexa, "_async_send_alexa", new=AsyncMock()) as send_alexa:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         phone.assert_not_awaited()
         wa.assert_not_awaited()
-        alexa.assert_not_awaited()
+        send_alexa.assert_not_awaited()
 
     async def test_empty_notification_alexa_still_schedules(self):
         """Empty notification_alexa = default 'show' keyword → Alexa runs."""
@@ -120,11 +124,11 @@ class TestChannelRouting:
         entry = _make_entry()
         call = _make_call(message_alexa="bonjour", notification_alexa="")
 
-        with patch.object(nm, "_async_send_alexa", new=AsyncMock()) as alexa:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(alexa, "_async_send_alexa", new=AsyncMock()) as send_alexa:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
-        alexa.assert_awaited_once()
+        send_alexa.assert_awaited_once()
 
     async def test_telegram_group_without_payload_skipped(self):
         """telegram_group with no message and no photo → skipped with warning."""
@@ -133,8 +137,8 @@ class TestChannelRouting:
         entry = _make_entry()
         call = _make_call(telegram_group="family")  # no message_tel, no photo
 
-        with patch.object(nm, "_async_send_telegram_group", new=AsyncMock()) as group:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_telegram_group", new=AsyncMock()) as group:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         group.assert_not_awaited()
@@ -146,8 +150,8 @@ class TestChannelRouting:
         entry = _make_entry()
         call = _make_call(telegram_group="family", photo_path="/config/www/x.jpg")
 
-        with patch.object(nm, "_async_send_telegram_group", new=AsyncMock()) as group:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_telegram_group", new=AsyncMock()) as group:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         group.assert_awaited_once()
@@ -164,8 +168,8 @@ class TestVerifySslPropagation:
         call = _make_call(message_tel="hello", notification_whatsapp="alice",
                           notification_tel="none")
 
-        with patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()) as wa:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         assert wa.call_args.args[-1] is flag
@@ -179,8 +183,8 @@ class TestVerifySslPropagation:
         call = _make_call(message_tel="hello", notification_whatsapp="alice",
                           notification_tel="none")
 
-        with patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()) as wa:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         assert wa.call_args.args[-1] is True
@@ -202,10 +206,10 @@ class TestAlexaDetachment:
             started.set()
             await release.wait()
 
-        with patch.object(nm, "_async_send_alexa", new=slow_alexa):
+        with patch.object(alexa, "_async_send_alexa", new=slow_alexa):
             # Must complete promptly even though the Alexa task is blocked
             await asyncio.wait_for(
-                nm._async_handle_notify(hass, entry, call), timeout=1
+                notify._async_handle_notify(hass, entry, call), timeout=1
             )
 
             await asyncio.sleep(0)
@@ -227,9 +231,9 @@ class TestAlexaDetachment:
         async def slow_en(*args, **kwargs):
             await release.wait()
 
-        with patch.object(nm, "_async_send_alexa_en_delayed", new=slow_en):
+        with patch.object(alexa, "_async_send_alexa_en_delayed", new=slow_en):
             await asyncio.wait_for(
-                nm._async_handle_notify(hass, entry, call), timeout=1
+                notify._async_handle_notify(hass, entry, call), timeout=1
             )
             assert len(created) == 1
             release.set()
@@ -249,9 +253,9 @@ class TestWhatsAppWithoutPhone:
             notification_whatsapp="alice",
         )
 
-        with patch.object(nm, "_async_send_phone", new=AsyncMock()) as phone, \
-             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_phone", new=AsyncMock()) as phone, \
+             patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()) as wa:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         phone.assert_not_awaited()
@@ -270,9 +274,9 @@ class TestWhatsAppWithoutPhone:
             notification_whatsapp="alice",
         )
 
-        with patch.object(nm, "_async_send_phone", new=AsyncMock()) as phone, \
-             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_phone", new=AsyncMock()) as phone, \
+             patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()) as wa:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         phone.assert_not_awaited()
@@ -295,15 +299,15 @@ class TestSelectorWhitespace:
             notification_alexa=" off ",
         )
 
-        with patch.object(nm, "_async_send_phone", new=AsyncMock()) as phone, \
-             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa, \
-             patch.object(nm, "_async_send_alexa", new=AsyncMock()) as alexa:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_phone", new=AsyncMock()) as phone, \
+             patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()) as wa, \
+             patch.object(alexa, "_async_send_alexa", new=AsyncMock()) as send_alexa:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         phone.assert_not_awaited()
         wa.assert_not_awaited()
-        alexa.assert_not_awaited()
+        send_alexa.assert_not_awaited()
 
     async def test_padded_whatsapp_target_still_fires(self):
         created: list = []
@@ -315,8 +319,8 @@ class TestSelectorWhitespace:
             notification_whatsapp="  alice  ",
         )
 
-        with patch.object(nm, "_async_send_whatsapp", new=AsyncMock()) as wa:
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()) as wa:
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         wa.assert_awaited_once()
@@ -336,10 +340,10 @@ class TestMessagingUsesAsyncCreateTask:
             telegram_group="family",
         )
 
-        with patch.object(nm, "_async_send_phone", new=AsyncMock()), \
-             patch.object(nm, "_async_send_whatsapp", new=AsyncMock()), \
-             patch.object(nm, "_async_send_telegram_group", new=AsyncMock()):
-            await nm._async_handle_notify(hass, entry, call)
+        with patch.object(messaging, "_async_send_phone", new=AsyncMock()), \
+             patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()), \
+             patch.object(messaging, "_async_send_telegram_group", new=AsyncMock()):
+            await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
         # Three messaging channels + no Alexa → exactly 3 hass tasks.

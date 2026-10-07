@@ -14,7 +14,7 @@ from notification_manager.alexa_emissions import (  # noqa: E402
 )
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
-    from notification_manager.__init__ import (  # noqa: E402
+    from notification_manager.alexa import (  # noqa: E402
         DATA_ALEXA_EMISSIONS,
         DATA_ALEXA_RESOLVER,
         _async_send_alexa,
