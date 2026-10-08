@@ -48,7 +48,7 @@ Si un restore échoue, on programme un nouvel essai. Trois tentatives, espacemen
 Side effects à gérer :
 
 - **Volume baissé manuellement pendant la fenêtre de retry** : le job doit vérifier que `volume_level` n'a pas bougé depuis l'échec avant de restaurer (sinon il écraserait le choix de l'utilisateur).
-- **Jobs en mémoire** : un redémarrage Home Assistant les tue. Même limitation que le Case B de base ; le boot-time recovery (ci-dessous) compense.
+- **Jobs en mémoire** : un redémarrage Home Assistant les tue. Même limitation que le Case B de base ; le boot-time recovery + persistance (ci-dessous) compense.
 - **Cleanup** : retirer les entrées de verrous/files quand une entity disparaît de la config.
 
 ### Estimation de durée du TTS au lieu de huit secondes hardcodées
@@ -58,6 +58,14 @@ Huit secondes, c'est le défaut actuel, mais c'est trop court pour certains mess
 ### Anglais = Echo dédié = file séparée
 
 Le chemin `message_alexa_en` vise un Echo dédié (`alexa_en_target`), distinct des players français. Il a donc **sa propre file**, pas de partage avec les files françaises. Comportement identique par ailleurs (save, set, TTS, restore), avec son propre délai.
+
+### Persistance du last-known-good (nouveau — session du 8 octobre)
+
+Aujourd'hui `DATA_ALEXA_LAST_GOOD_VOLUMES` est purement en mémoire : un reboot Home Assistant l'efface, et le Case B (volume bloqué haut après restart) n'a aucune parade. **Décision : persister le cache dans le store de Home Assistant** (`hass.helpers.storage` ou équivalent). Au boot, `async_setup_entry` recharge le cache avant de scanner les players.
+
+Règle d'écriture stricte : **on ne persiste que sur une lecture de volume réussie** (`reported is not None`). Une entity indisponible ou un `volume_level` non numérique ne doit jamais écrire dans le cache — c'est exactement l'item 4. Sinon on persisterait une valeur empoisonnée à zéro virgule cinq et le boot-time recovery la réutiliserait indéfiniment.
+
+Au démarrage : pour chaque player dont `volume_level` est à moins de `_VOLUME_EPS` du `alexa_tts_volume` et diffère de la valeur persistée, forcer un restore vers la valeur du cache (ou `ALEXA_DEFAULT_VOLUME` s'il n'y a pas de cache). Ça tue le Case B et le Case I à la source, sans dépendre d'un job en mémoire.
 
 ### Mémoire
 
@@ -89,7 +97,31 @@ The real improvements on this item are the ones in the design cible above : per-
 
 When a target is `unavailable` / `unknown` at save time, `reported is None` → `ALEXA_DEFAULT_VOLUME` (0.5) written into `last_good`. If the true resting volume was 0.3, restores go to 0.5 until a good read lands.
 
-**Fix direction:** don't write to `last_good` when `reported is None`.
+**Fix direction:** don't write to `last_good` when `reported is None`. Combiné à la persistance : une valeur empoisonnée survivrait au reboot, donc cette règle devient critique.
+
+### 5. `alexa_post_tts_delay = 0` not rejected (LOW)
+
+The options flow validates `>= 0` but should validate `> 0`. A zero delay races the restore against in-flight TTS playback.
+
+### 6. No in-flight task cancellation on unload (MEDIUM)
+
+`async_unload_entry` stops the watchdog and coordinator but does not cancel running Alexa cycles or run their restores. Reload mid-cycle = orphaned task, no restore, and the shared cache survives the reload boundary.
+
+**Fix direction:** track in-flight tasks per entry, cancel or fence them on unload, and either clear or re-validate the (now persisted) cache.
+
+---
+
+## Chantiers pour un design solide (plan d'implémentation)
+
+Dans l'ordre :
+
+1. **Traiter les échecs de volume set** — collecter les bools du gather, sauter les enceintes mortes avant le TTS, warning agrégé. (Item 1)
+2. **Persister le last-known-good** dans le store HA + **boot-time recovery** au setup. (Persistance ci-dessus, tue Case B et Case I)
+3. **Restore différé exponentiel dédupliqué** — trois essais (30s / 1min / 2min), un job par entity, déclenché seulement si verrou libre et file vide. (Tue Case A et Case D)
+4. **Ne plus écrire last-good sur reported is None** + valider `alexa_post_tts_delay > 0` dans le flow. (Items 4 et 5)
+5. **Annuler ou clôturer les cycles en vol au unload** et purger le cache partagé. (Item 6)
+6. **File par Echo + save/restore unique** (design cible). Élimine le churn de volume entre messages consécutifs.
+7. **Estimation de durée TTS** depuis la longueur du texte, plancher = `alexa_post_tts_delay`. Empêche le restore anticipé en pleine annonce.
 
 ---
 
@@ -97,27 +129,17 @@ When a target is `unavailable` / `unknown` at save time, `reported is None` → 
 
 | Case | Trigger | Ends at | Mitigation today | Gap |
 |------|---------|---------|-----------------|-----|
-| A | Restore fails twice | 0.7 | retry-once | **→ delayed re-restore job (design cible)** |
-| B | HA restart in sleep window | 0.7, self-sustaining | none (docs only) | **→ boot-time recovery** |
-| C | Task cancelled pre-restore | 0.7 | `_run_logged` | no retry, no cleanup hook |
+| A | Restore fails twice | 0.7 | retry-once | **→ delayed re-restore job** |
+| B | HA restart in sleep window | 0.7, self-sustaining | none (docs only) | **→ persistance + boot-time recovery** |
+| C | Task cancelled pre-restore | 0.7 | `_run_logged` | **→ unload cancellation (item 6)** |
 | D | Restore `volume_set` raises | 0.7 | immediate retry | **→ delayed re-restore job** |
 | E | Overlapping cycles | 0.7 (transient) | last-known-good cache | cache can be poisoned (F) |
-| F | Unavailable at save | 0.5 (wrong) | none | **→ don't cache default (item 4)** |
-| G | delay = 0 | clipped TTS / race | validates `>= 0` | should be `> 0` |
+| F | Unavailable at save | 0.5 (wrong) | none | **→ don't cache default (item 4) + persistance rule** |
+| G | delay = 0 | clipped TTS / race | validates `>= 0` | **→ validate > 0 (item 5)** |
 | H | TTS call throws | restored (OK) | fall-through to step 5 | — |
-| I | Unload mid-cycle | 0.7 | none | no in-flight task cancellation |
+| I | Unload mid-cycle | 0.7 | none | **→ unload cancellation (item 6)** |
 | J | Bad volume_level type | 0.5 (wrong) | none | same as F |
 
 ---
-
-## What would actually fix the stuck-high class
-
-1. **Boot-time recovery:** on `async_setup_entry`, scan `alexa_players` for any whose `volume_level` is within `_VOLUME_EPS` of `alexa_tts_volume` and differs from its cached last-known-good; force a restore to the cached value (or `ALEXA_DEFAULT_VOLUME` if no cache). Kills Case B and Case I.
-2. **Delayed re-restore job:** exponential, 3 attempts (30s / 1min / 2min), deduplicated per entity, gated on lock-free + empty queue. Kills Case A and Case D. Side effects: manual volume changes during the window, in-memory jobs lost on restart.
-3. **Don't write `last_good` when `reported is None`** (item 4). Kills Case F and Case J.
-4. **Validate `alexa_post_tts_delay > 0`** in the options/reconfigure flow. Kills Case G.
-5. **Cancel or fence in-flight cycles on unload**, and clear or re-validate the shared cache. Kills Case I.
-6. **Per-Echo queue + single save/restore** (design cible). Eliminates volume churn between back-to-back messages and bounds the restore-failure window.
-7. **TTS duration estimation from message length** instead of hardcoded 8s. Prevents early restore mid-speech.
 
 None of these require upstream changes to alexa_media — they are all local to this component.
