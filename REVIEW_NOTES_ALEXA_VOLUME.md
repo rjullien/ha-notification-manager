@@ -1,5 +1,11 @@
 # Review: Alexa volume management — ha-notification-manager
 
+Document consolidé (PR #18) pour la revue de René : **Partie 1** = design initial Grok Tesla (substance inchangée) ; **Partie 2** = revue critique Grok Bot, vérifiée contre le code de la branche ; **Partie 3** = spec révisée et plan.
+
+---
+
+# Partie 1 — Analyse et design initial (Grok Tesla)
+
 > **Author:** Grok Tesla (Grok, voice session from a Tesla vehicle), on behalf of rjullien.
 > **Date:** 2026-10-07. Updated 2026-10-08 with design decisions from voice review.
 > **Scope:** `custom_components/notification_manager/alexa.py` — the save → set → TTS → restore volume cycle.
@@ -143,3 +149,164 @@ Dans l'ordre :
 ---
 
 None of these require upstream changes to alexa_media — they are all local to this component.
+
+---
+
+# Partie 2 — Revue critique et arguments (Grok Bot)
+
+Revue en lecture seule (8 oct. 2026). Affirmations sur **ce dépôt** vérifiées contre la branche `cursor/alexa-volume-review` (refs fichier / fonction / test). Affirmations sur **alexa_media / alexapy / HA core** : d'après lecture de code upstream par Grok Bot — **non testées sur appareil** chez René ; version installée non vérifiable ici.
+
+## 2.1 Cause racine manquante (upstream, non testée sur appareil)
+
+Le design Partie 1 traite bien les symptômes locaux (restore raté A/D, restart pendant le sleep B, unload mi-cycle C/I, cache empoisonné à 0.5 F/J, délai 0 G). Il ne mentionne pas le mécanisme amont :
+
+- Dans **alexa_media**, `async_set_volume_level` et `async_send_tts` seraient fire-and-forget (`hass.async_create_task(self.alexa_api.set_volume(...))`) ; `volume_level` mis à jour de façon **optimiste** ; appel sur Echo indisponible ignoré silencieusement *(lecture upstream, non testée)*.
+- Dans **alexapy** `run_behavior`, les exceptions seraient avalées et les commandes regroupées ~**1,5 s** (`queue_delay`) en une séquence *(lecture upstream, non testée)*.
+
+Conséquences pour notre code local :
+
+- `_async_set_volume` (`alexa.py`) renvoie `True` dès que `media_player.volume_set` avec `blocking=True` ne lève pas — un échec Amazon ne remonte donc presque jamais.
+- Le commentaire d'étape 2 (`alexa.py` ~269–270 : « speech can never start at the old volume ») suppose un ordre volume→TTS que `blocking=True` **ne garantit pas** si alexa_media détache l'appel API *(hypothèse upstream)*.
+
+## 2.2 Verdict idée par idée
+
+### Files par Echo — à ajuster / risqué
+
+**Gain réel** : pièces indépendantes, moins de rampes volume. **Trous dans le design** :
+
+- `_async_send_alexa` envoie **un seul** `notify.alexa_media` avec une **liste** de cibles (`alexa.py` ~277–281). Multi-cibles ⇒ N verrous en ordre trié (sinon deadlock) ou N envois non synchronisés.
+- Avec plusieurs serials, alexapy regrouperait par compte et pourrait paralléliser volume et TTS d'une même Echo *(upstream, non testé)*.
+- `entity_id` ≠ appareil physique (groupes WHA, paires stéréo ; docstring alexa_media « Does not work on WHA Groups » — *upstream*).
+- Risque de famine du restore → maintien maximal nécessaire ; propriété des workers multi-entry + annulation à l'unload.
+
+**Alternative moins chère** : garder le verrou global (`DATA_ALEXA_LOCK`, docstring `__init__.py` : « one volume save/restore lock for the house ») et **coalescer** (si un cycle attend déjà le verrou, ne pas restaurer/resauvegarder entre les deux).
+
+### Retry de restore dédupliqué — bonne idée, mauvais déclencheur
+
+Les échecs sont silencieux côté Amazon ; relire `volume_level` ne prouve rien (optimiste). Mieux : **re-restore systématique ~15–30 s** après le cycle, un seul par Echo, annulé par un nouveau cycle ou l'unload (`async_call_later` + `entry.async_on_unload`) ; sauté si `volume_level` n'est ni la valeur restaurée ni le niveau TTS (changement manuel). 1–2 renvois suffisent, pas 3.
+
+Aujourd'hui : un seul retry immédiat dans `_async_restore_volumes` (`alexa.py` ~117–128) — conforme aux cas A/D de la matrice Partie 1.
+
+### Estimation de durée — bonne, à ajuster
+
+Ajouter un offset (queue_delay alexapy ~1,5 s + latence cloud — *upstream*), compter en caractères, retirer le SSML, plafond, plancher = `alexa_post_tts_delay`, débit à calibrer. Passer la même estimation à `_record_alexa_emission` (`speech_estimate`, aujourd'hui = `alexa_post_tts_delay` dans `alexa.py` ~184).
+
+### Last-known-good persisté + recovery au boot — bon fond, détail risqué
+
+- API : utiliser `homeassistant.helpers.storage.Store` (`async_load` / `async_save` / `async_delay_save`), pas `hass.helpers.storage` (API obsolète / absente — *HA core*).
+- Au setup, les entités alexa_media peuvent ne pas être prêtes → attendre `EVENT_HOMEASSISTANT_STARTED` + entité disponible avec volume valide, avec timeout.
+- Faux positif : la règle « volume ≈ TTS et ≠ sauvegardé » baisse à chaque boot une Echo volontairement à 0,7. **Mieux** : persister un marqueur « cycle en cours » (repos + TTS) **avant** la montée, l'effacer après le restore ; au boot, ne corriger que les Echo marquées (crash / coupure).
+- « N'écrire que sur une lecture réussie » : correct et indispensable (cf. item 4).
+- Multi-entry : cache partagé sous `hass.data[DOMAIN]` (`__init__.py` ~126–128) — **ne jamais le vider** à l'unload d'une entrée (contredit l'item 6 Partie 1 « purger le cache »).
+- Nuance cas B : à l'arrêt normal HA attendrait les tâches `hass.async_create_task` (jusqu'à ~100 s) ; B viendrait surtout des crashs / arrêts forcés ou d'alexa_media qui s'arrête en parallèle *(HA core / non vérifié sans logs)*.
+
+### Unload / reload (absent du design Partie 1)
+
+Avec une seule entrée (cas typique), `async_unload_entry` fait `hass.data.pop(DOMAIN)` quand plus aucune entrée reste (`__init__.py` ~192–199) → verrou, cache et journal perdus. La tâche en vol (créée via `hass.async_create_task` dans `notify.py` ~79–86) garde l'ancien verrou ; la nouvelle entrée en crée un autre → chevauchement (cas E) ; cache perdu à chaque reconfigure (équivalent cas B).
+
+**Fix** : `entry.async_create_task(hass, ...)` pour les tâches Alexa (HA attend ~10 s au unload — *HA core*).
+
+### Annulation mi-cycle
+
+Dans `_async_send_alexa`, pas de `try/finally` autour des étapes 2–5 : une annulation pendant le `asyncio.sleep` (étape 4) saute l'étape 5 (cas C). Proposition : `try/finally` + `asyncio.shield` sur le restore.
+
+### Chemin anglais
+
+Marqué inutilisé par le mainteneur dans `notify.py` ~88–89. `_async_send_alexa_en` (`alexa.py` ~377–410) **ne gère ni volume ni verrou**. Ne pas l'inclure dans le design volume (contredit « comportement identique » Partie 1).
+
+## 2.3 Réponses recommandées aux points ouverts
+
+| # | Sujet | Verdict Grok Bot |
+|---|--------|------------------|
+| 1 | Échecs `volume_set` | Garder les bools + warning groupé ; **jamais** annuler le TTS. Faible valeur, pas prioritaire (échecs Amazon silencieux de toute façon — *upstream*). |
+| 2 | Pas de read-back | Documenter. « Pas observé en pratique » est contredit par le modèle multi-cibles alexapy *(upstream)*. Option à tester : ~2 s (> queue_delay) entre volume et TTS. |
+| 3 | Sleep sous verrou | Déjà reclassé feature (Partie 1) — OK. |
+| 4 | 0,5 sur Echo indisponible | Ne pas écrire dans le cache si `reported is None` — changer aussi `alexa.py` **ligne 267** (`last_good[entity_id] = restore_vol`), pas seulement `_resolve_restore_volume`. Sans valeur connue, exclure l'Echo des changements de volume. Adapter `test_unavailable_player_uses_default_volume` (`tests/test_alexa_tts.py`). Le filtre amont (`alexa.py` ~222–224) n'exclut que `unavailable`, pas `unknown`. |
+| 5 | Délai 0 | Valider `> 0` dans `async_step_reconfigure_alexa` (`config_flow.py` ~336–338, aujourd'hui `< 0` rejeté) + plancher runtime `max(delay, 2)` pour les entrées existantes. Attention à `test_zero_volume_and_delay_preserved` (`tests/test_guards_and_unload.py`). Rendu en partie caduc par l'estimation de durée. |
+| 6 | Unload | `entry.async_create_task` + restore en `finally` protégé ; **ne pas** vider le cache partagé. |
+
+## 2.4 Écarts doc (Partie 1) / code (branche)
+
+| Affirmation Partie 1 | Réalité code |
+|----------------------|--------------|
+| Item 5 : validation dans « options flow » | Validation `alexa_post_tts_delay` dans `async_step_reconfigure_alexa` ; l'options flow ne gère que le bridge (`config_flow.py` ~436–437). |
+| Item 6 : « le cache survit au reload » | Faux avec une seule entrée : `hass.data.pop(DOMAIN)` (`__init__.py` ~199). |
+| Anglais : « comportement identique » | Faux : `_async_send_alexa_en` sans volume/verrou. |
+| Ordre volume puis TTS garanti | Commentaire étape 2 + design le supposent ; non garanti si alexa_media fire-and-forget *(upstream)*. |
+| `hass.helpers.storage` | À remplacer par `homeassistant.helpers.storage.Store` *(HA core)*. |
+| Verrou global | Intentionnel (`__init__.py` docstring) — à mettre à jour si files par Echo. |
+| Commit « 5 open issues » vs 6 items | Le doc numérote 6 (dont #3 = feature) ; le message de commit parlait de 5. |
+
+**Conformes** : cas A/D (retry immédiat `_async_restore_volumes`) ; cas H (`test_tts_failure_still_restores_volume`) ; mécanisme B via branche « first cycle » de `_resolve_restore_volume` (`alexa.py` ~94–96).
+
+**Non vérifiable ici** : fréquence réelle des cas (logs), comportement réel du bridge avec Bearer, deux TTS qui se chevauchent sur une même Echo.
+
+## 2.5 Fix WhatsApp Bearer (hors volume, présent sur la PR)
+
+- Correct : `_async_send_whatsapp` ajoute `Authorization: Bearer {bridge_token}` (`messaging.py` ~202–205) ; `notify.py` passe `entry.data[CONF_BRIDGE_TOKEN]` (~122–127).
+- Cohérent avec `coordinator.py` ~58, `bridge_services.py` ~79 / ~120, `config_flow.py` ~98.
+- Historique : retiré volontairement en `6e13d75` (v1.8.0 « migrate to GoWA bridge (no auth…) ») ; la PR le remet.
+- Token vide → header `Bearer ` (espace final) ; les autres appels font déjà pareil — comportement bridge **non vérifié** sans le code du bridge.
+- Suggestion : n'envoyer le header que si token non vide, via un helper partagé par les 4 appels.
+- Test manquant dans `TestSendWhatsapp` (`tests/test_whatsapp.py`) : avec / sans token.
+- `a5795f8` avait tronqué `messaging.py` (~33 lignes) ; `567f305` restaure. Vs `main` : trois catégories de diff (header Bearer, docstring, renommage `_LOGGER` → `_LOGGING`). Squash-merge recommandé. Renommage `_LOGGING` à annuler (convention HA = `_LOGGER`).
+
+---
+
+# Partie 3 — Spec révisée et plan
+
+Synthèse pour décision de René. Priorité : corriger les trous qui laissent le volume à 0,7 **sans** réécrire l'architecture.
+
+## 3.1 Décisions proposées
+
+| Sujet | Décision proposée |
+|-------|-------------------|
+| Cause racine Amazon / alexapy | Documenter comme limite amont ; ne pas compter sur `blocking=True` ni sur `volume_level` comme preuve de succès. |
+| Files par Echo | **Reporté.** D'abord coalescing sous le verrou global existant. |
+| Retry restore | Re-restore **systématique** ~20 s après le cycle (1–2 fois), annulable ; pas de déclencheur « échec détecté » (silencieux). |
+| Durée TTS estimée | Reportée (accompagne les files / coalescing). En attendant : plancher runtime du délai. |
+| Persistance | `Store` + marqueur « cycle en cours » ; recovery seulement pour les Echo marquées, après `EVENT_HOMEASSISTANT_STARTED`. |
+| Cache last-good | Ne jamais écrire si `reported is None` (dont ligne 267) ; ne pas purger à l'unload. |
+| Unload | `entry.async_create_task` + `try/finally` + `asyncio.shield` sur le restore. |
+| Chemin EN | Hors scope volume (inutilisé ; pas de save/restore aujourd'hui). |
+| Item 1 (bools volume_set) | Reporté — warning groupé OK plus tard, ne jamais bloquer le TTS. |
+| WhatsApp Bearer | Garder le fix ; annuler `_LOGGING` → `_LOGGER` ; helper header si token non vide ; ajouter tests ; squash recommandé. |
+
+## 3.2 PR 1 — correctif minimal (~60 lignes)
+
+Fichiers : `alexa.py`, `notify.py` (pas de nouvelle API HA / pas de Store).
+
+1. **Restore garanti** : `try/finally` autour des étapes 2–4 de `_async_send_alexa` ; `asyncio.shield` sur `_async_restore_volumes` (cas C / I).
+2. **Tâches trackées** : remplacer `hass.async_create_task` par `entry.async_create_task(hass, ...)` pour Alexa FR (et EN si on le laisse) dans `notify.py`.
+3. **Cache sain** : si `reported is None`, ne pas faire `last_good[entity_id] = restore_vol` (ligne 267) ; exclure cette Echo des `volume_set` TTS/restore faute de valeur connue. Adapter `test_unavailable_player_uses_default_volume`.
+4. **Re-restore systématique** : ~20 s après le cycle, un job par Echo (`async_call_later` + `entry.async_on_unload`), annulé si nouveau cycle ; sauté si volume ni repos ni TTS.
+5. **Plancher délai** : runtime `max(alexa_post_tts_delay, 2)` (entrées déjà à 0) ; optionnellement valider `> 0` dans `async_step_reconfigure_alexa` (et mettre à jour `test_zero_volume_and_delay_preserved` si la sémantique change).
+
+Hors PR 1 mais dans le même train WhatsApp (déjà sur la branche) : revert `_LOGGING` → `_LOGGER` ; test Bearer dans `TestSendWhatsapp`.
+
+## 3.3 PR 2 — Store + marqueur + recovery boot
+
+1. Persister via `homeassistant.helpers.storage.Store` le cache last-known-good **et** un marqueur « cycle en cours » (entity → `{resting, tts}`) écrit **avant** la montée, effacé après restore réussi.
+2. Au boot : après `EVENT_HOMEASSISTANT_STARTED`, pour chaque Echo encore marquée, attendre disponibilité + `volume_level` numérique (timeout), puis restaurer vers `resting` (pas la heuristique « ≈ TTS » seule — évite le faux positif 0,7 volontaire).
+3. Écriture Store uniquement sur lecture réussie (`reported is not None`).
+4. Multi-entry : un Store domaine partagé ; jamais vidé à l'unload d'une entrée.
+
+## 3.4 Reporté
+
+- Files par Echo (+ estimation de durée TTS, calibrage débit / offset queue_delay).
+- Coalescing sous verrou global (préalable moins cher aux files).
+- Item 1 (collecte bools / skip cibles mortes avant TTS).
+- Read-back post-`volume_set` / pause ~2 s (à tester empiriquement).
+- Alignement volume du chemin anglais (sauf décision contraire de René).
+- Helper Bearer partagé + omission du header si token vide (suggestion qualité).
+
+## 3.5 Questions ouvertes pour René
+
+1. **Confirmer PR 1 puis PR 2** (plutôt que le plan 7 étapes Partie 1) ?
+2. **Coalescing** sous verrou global acceptable comme étape avant (ou à la place de) files par Echo ?
+3. **Re-restore à ~20 s** (1–2 fois) vs retry exponentiel 30 s / 1 min / 2 min sur échec détecté ?
+4. **Marqueur « cycle en cours »** pour le boot recovery — OK, ou préférence pour l'heuristique volume ≈ TTS de la Partie 1 ?
+5. **Plancher runtime** du délai (ex. 2 s) : quelle valeur minimale chez toi ? Garder 0 en config + forcer au runtime, ou rejeter 0 dans le reconfigure ?
+6. **WhatsApp** : squash des commits Bearer + revert `_LOGGING` dans la même PR, ou branche / commit séparés ?
+7. **Chemin EN** : laisser tel quel (inutilisé), supprimer plus tard, ou un jour aligner sur le cycle volume ?
+8. As-tu des **logs** de cas A/B/C observés en prod pour prioriser (fréquence réelle non vérifiable ici) ?
