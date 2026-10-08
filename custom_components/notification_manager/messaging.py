@@ -20,7 +20,8 @@ from .jid_utils import jid_to_phone
 from .runtime import _get_runtime_config
 from .telegram_text import PARSE_MODE_PLAIN
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGING = logging.getLogger(__name__)
+
 
 async def _async_send_phone(
     hass: HomeAssistant, entry: ConfigEntry, message: str, notification_tel: str,
@@ -29,13 +30,13 @@ async def _async_send_phone(
     """Send mobile push + Telegram notifications (all targets in parallel)."""
     cfg = _get_runtime_config(entry)
     targets = _resolve_phone_targets(notification_tel, cfg["phone_default_targets"])
-    _LOGGER.debug("Phone targets resolved: %s", targets)
+    _LOGGING.debug("Phone targets resolved: %s", targets)
 
     sends: list[Awaitable] = []
     for target_key in targets:
         target_cfg = cfg["phone_targets"].get(target_key)
         if not target_cfg:
-            _LOGGER.warning("Unknown phone target: %s", target_key)
+            _LOGGING.warning("Unknown phone target: %s", target_key)
             continue
         sends.append(
             _async_send_phone_target(
@@ -63,9 +64,9 @@ async def _async_send_phone_target(
             {"message": message},
             blocking=True,
         )
-        _LOGGER.debug("Mobile push sent to %s", mobile_service)
+        _LOGGING.debug("Mobile push sent to %s", mobile_service)
     except Exception as exc:  # noqa: BLE001
-        _LOGGER.error("Failed to send mobile push to %s: %s", mobile_service, exc)
+        _LOGGING.error("Failed to send mobile push to %s: %s", mobile_service, exc)
 
     # Telegram
     telegram_chat_id = target_cfg.get("telegram_chat_id")
@@ -75,9 +76,9 @@ async def _async_send_phone_target(
                 hass, telegram_chat_id, message,
                 parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
             )
-            _LOGGER.debug("Telegram sent to chat_id %s", telegram_chat_id)
+            _LOGGING.debug("Telegram sent to chat_id %s", telegram_chat_id)
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.error(
+            _LOGGING.error(
                 "Failed to send Telegram to %s: %s", telegram_chat_id, exc
             )
 
@@ -141,13 +142,13 @@ async def _async_send_telegram_group(
     telegram_groups = cfg.get("telegram_groups", {})
     chat_id = telegram_groups.get(group_name.strip().lower())
     if not chat_id:
-        _LOGGER.warning("Unknown Telegram group: %s", group_name)
+        _LOGGING.warning("Unknown Telegram group: %s", group_name)
         return
 
     try:
         chat_id_int = int(chat_id)
     except (TypeError, ValueError):
-        _LOGGER.error(
+        _LOGGING.error(
             "Invalid chat_id %r for Telegram group %s — must be an integer",
             chat_id, group_name,
         )
@@ -158,9 +159,9 @@ async def _async_send_telegram_group(
             hass, chat_id_int, message,
             parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
         )
-        _LOGGER.debug("Telegram group '%s' (chat_id=%s) sent", group_name, chat_id_int)
+        _LOGGING.debug("Telegram group '%s' (chat_id=%s) sent", group_name, chat_id_int)
     except Exception as exc:  # noqa: BLE001
-        _LOGGER.error(
+        _LOGGING.error(
             "Failed to send to Telegram group %s (chat_id=%s): %s",
             group_name, chat_id_int, exc,
         )
@@ -180,22 +181,27 @@ async def _async_send_whatsapp(
     WhatsApp is plain-text only: the bridge payload is ``{phone, message}`` with
     no Telegram-style ``parse_mode``. Callers' ``parse_mode`` applies to Telegram
     channels only.
+
+    The bridge token is sent as a Bearer header on every request, matching the
+    auth pattern used by the health check, logs and restart endpoints. Bridges
+    that do not require auth (e.g. GoWA secured by Tailscale) simply ignore it.
     """
     if not bridge_url:
-        _LOGGER.error("WhatsApp bridge URL not configured")
+        _LOGGING.error("WhatsApp bridge URL not configured")
         return
 
     cfg = _get_runtime_config(entry)
     targets = _resolve_whatsapp_targets(notification_whatsapp, cfg["whatsapp_contacts"])
     if not targets:
-        _LOGGER.debug("No WhatsApp targets for %r", notification_whatsapp)
+        _LOGGING.debug("No WhatsApp targets for %r", notification_whatsapp)
         return
 
-    _LOGGER.debug("WhatsApp targets: %s", targets)
+    _LOGGING.debug("WhatsApp targets: %s", targets)
 
     session = async_get_bridge_session(hass, verify_ssl)
     headers = {
         "Content-Type": "application/json",
+        "Authorization": f"Bearer {bridge_token}",
     }
     url = bridge_url.rstrip("/") + BRIDGE_SEND_ENDPOINT
 
@@ -238,10 +244,10 @@ async def _async_send_whatsapp_to_jid(
                 timeout=aiohttp.ClientTimeout(total=BRIDGE_TIMEOUT),
             ) as resp:
                 if resp.status < 300:
-                    _LOGGER.debug("WhatsApp sent to %s (attempt %d)", jid, attempt)
+                    _LOGGING.debug("WhatsApp sent to %s (attempt %d)", jid, attempt)
                     return True
                 body = await resp.text()
-                _LOGGER.warning(
+                _LOGGING.warning(
                     "WhatsApp bridge returned %d for %s (attempt %d): %s",
                     resp.status,
                     jid,
@@ -250,7 +256,7 @@ async def _async_send_whatsapp_to_jid(
                 )
                 last_error = Exception(f"HTTP {resp.status}: {body[:200]}")
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning(
+            _LOGGING.warning(
                 "WhatsApp bridge error for %s (attempt %d): %s",
                 jid,
                 attempt,
@@ -261,7 +267,7 @@ async def _async_send_whatsapp_to_jid(
         if attempt < BRIDGE_RETRIES:
             await asyncio.sleep(2**attempt)  # exponential backoff
 
-    _LOGGER.error(
+    _LOGGING.error(
         "WhatsApp delivery failed for %s after %d retries: %s",
         jid,
         BRIDGE_RETRIES,
@@ -282,7 +288,7 @@ def _resolve_whatsapp_targets(notification_whatsapp: str, whatsapp_contacts: dic
         if jid:
             jids.append(jid)
         else:
-            _LOGGER.warning("Unknown WhatsApp contact: %s", name)
+            _LOGGING.warning("Unknown WhatsApp contact: %s", name)
     return jids
 
 
@@ -306,6 +312,6 @@ async def _async_send_bridge_alert(hass: HomeAssistant, entry: ConfigEntry, mess
                 blocking=True,
             )
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.error(
+            _LOGGING.error(
                 "Failed to send bridge alert to Telegram %s: %s", chat_id, exc
             )
