@@ -201,3 +201,9 @@ recent_alexa_emissions:
       default: false
       selector:
         boolean:
+
+restore_alexa_volumes:
+  name: "Restore Alexa Volumes"
+  description: >
+    Restore available Alexa players to their last-known resting volume.
+    Restricted to administrator users.

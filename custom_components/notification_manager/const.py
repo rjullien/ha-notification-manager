@@ -60,6 +60,12 @@ ALEXA_RERESTORE_DELAY = 20
 # Pause before retrying a failed volume restore (seconds).
 ALEXA_RESTORE_RETRY_DELAY = 1
 
+# Delay before writing the resting-volume cache to storage (seconds).
+ALEXA_VOLUME_SAVE_DELAY = 10
+
+# Allow alexa_media to refresh players before checking post-start volumes.
+ALEXA_BOOT_RECOVERY_DELAY = 60
+
 # Delay before sending English Alexa message (seconds)
 ALEXA_EN_DELAY = 3
 
@@ -143,6 +149,7 @@ SENSOR_STATE_UNKNOWN = "unknown"
 
 SERVICE_NOTIFY = "notify"
 SERVICE_RECENT_ALEXA_EMISSIONS = "recent_alexa_emissions"
+SERVICE_RESTORE_ALEXA_VOLUMES = "restore_alexa_volumes"
 
 # Platforms
 PLATFORMS = ["sensor"]

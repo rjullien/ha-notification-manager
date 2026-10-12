@@ -161,7 +161,7 @@ Polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
 
 Restoration is guaranteed on cancellation (including HA shutdown) and errors. A 2-second minimum post-TTS delay prevents restoring before speech has finished. Twenty seconds after restore, the integration checks once for a delayed Alexa Media volume update and corrects it only if the player is still at the TTS volume.
 
-The full cycle is serialised behind a lock so overlapping `notify` calls cannot interleave. That alone is not enough: Alexa Media often leaves HA's `volume_level` stuck at the TTS level after restore returns, so the next *serialised* cycle would save TTS as the "original" and leave the speaker loud. The last-known-good cache (and treating "current == TTS volume" as suspicious when a resting volume is remembered) closes that gap. The English message (`message_alexa_en`) runs as an independent task with its own 3 s delay — it is never delayed by slow channels (e.g. WhatsApp retries).
+The full cycle is serialised behind a lock so overlapping `notify` calls cannot interleave. That alone is not enough: Alexa Media often leaves HA's `volume_level` stuck at the TTS level after restore returns, so the next *serialised* cycle would save TTS as the "original" and leave the speaker loud. The last-known-good cache (and treating "current == TTS volume" as suspicious when a resting volume is remembered) closes that gap. Resting volumes are persisted in Home Assistant's `.storage`; after startup, a player still at TTS volume after 60 seconds is restored automatically. Admins can also call `notification_manager.restore_alexa_volumes` for manual recovery. The English message (`message_alexa_en`) runs as an independent task with its own 3 s delay — it is never delayed by slow channels (e.g. WhatsApp retries).
 
 ---
 
@@ -238,7 +238,7 @@ WATCHDOG_COOLDOWN_HOURS = 6                # Hours between re-alerts
 | Service not available | Restart HA; check logs for `notification_manager` |
 | Alexa TTS not working | Verify Alexa Media Player integration + entity IDs in `const.py` |
 | WhatsApp not delivered | Check `sensor.notification_manager_whatsapp_status`; verify bridge URL/token |
-| Volume not restored | Restore manually if HA restarted mid-TTS (resting volumes are in-memory only; last-known-good is lost on restart) |
+| Volume not restored | Resting volumes are persisted in `.storage`; a player still at TTS volume 60 s after HA starts is restored automatically. Admins can call `notification_manager.restore_alexa_volumes` for manual recovery. |
 
 ---
 

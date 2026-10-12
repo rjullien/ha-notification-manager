@@ -29,13 +29,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import timedelta
+from functools import partial
 
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.storage import Store
 
 from .alexa import (
     DATA_ALEXA_EMISSIONS,
@@ -43,9 +48,12 @@ from .alexa import (
     DATA_ALEXA_LAST_GOOD_VOLUMES,
     DATA_ALEXA_LOCK,
     DATA_ALEXA_RERESTORE_UNSUBS,
+    DATA_ALEXA_STORE,
     DATA_ALEXA_RESOLVER,
     DEFAULT_EMISSION_QUERY_SECONDS,
     MAX_EMISSION_QUERY_SECONDS,
+    _async_boot_recovery,
+    _async_restore_saved_volumes,
     _async_send_alexa,
     _async_send_alexa_en,
     _async_send_alexa_en_delayed,
@@ -66,6 +74,8 @@ from .const import (
     ALEXA_KEYWORD_EXCLUDES,
     ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
     ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
+    ALEXA_BOOT_RECOVERY_DELAY,
+    ALEXA_VOLUME_SAVE_DELAY,
     CONF_BRIDGE_TOKEN,
     CONF_BRIDGE_URL,
     CONF_VERIFY_SSL,
@@ -73,6 +83,7 @@ from .const import (
     PLATFORMS,
     SERVICE_NOTIFY,
     SERVICE_RECENT_ALEXA_EMISSIONS,
+    SERVICE_RESTORE_ALEXA_VOLUMES,
 )
 from .messaging import (
     _async_call_telegram,
@@ -117,7 +128,9 @@ SERVICE_NOTIFY_SCHEMA = vol.Schema(
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Notification Manager from a config entry."""
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {
+    domain_data = hass.data[DOMAIN]
+    first_setup = DATA_ALEXA_STORE not in domain_data
+    domain_data[entry.entry_id] = {
         CONF_BRIDGE_URL: entry.data.get(CONF_BRIDGE_URL, ""),
         CONF_BRIDGE_TOKEN: entry.data.get(CONF_BRIDGE_TOKEN, ""),
         CONF_VERIFY_SSL: _entry_verify_ssl(entry),
@@ -128,19 +141,66 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Serialises Alexa volume save→TTS→restore cycles so overlapping notify
     # calls can't capture the TTS volume as the "original" one.
     # Shared across entries: one lock / emission log / volume cache for the house.
-    hass.data[DOMAIN].setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
-    hass.data[DOMAIN].setdefault(DATA_ALEXA_LAST_GOOD_VOLUMES, {})
-    hass.data[DOMAIN].setdefault(DATA_ALEXA_GENERATIONS, {})
-    hass.data[DOMAIN].setdefault(DATA_ALEXA_RERESTORE_UNSUBS, {})
+    domain_data.setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
+    last_good: dict[str, float] = domain_data.setdefault(
+        DATA_ALEXA_LAST_GOOD_VOLUMES, {}
+    )
+    domain_data.setdefault(DATA_ALEXA_GENERATIONS, {})
+    domain_data.setdefault(DATA_ALEXA_RERESTORE_UNSUBS, {})
     # In-memory only, shared by all entries: consumers ask "did a speaker in
     # this house just talk?" instead of re-implementing target resolution.
-    hass.data[DOMAIN].setdefault(
+    domain_data.setdefault(
         DATA_ALEXA_EMISSIONS,
         AlexaEmissionLog(
             max_entries=ALEXA_EMISSION_LOG_SIZE,
             retention=timedelta(minutes=ALEXA_EMISSION_RETENTION_MINUTES),
         ),
     )
+
+    if first_setup:
+        store = Store(hass, 1, "notification_manager.alexa_volumes")
+        domain_data[DATA_ALEXA_STORE] = store
+        try:
+            stored = await store.async_load()
+        except Exception as exc:  # noqa: BLE001
+            _LOGGER.warning("Failed to load stored Alexa volumes: %s", exc)
+            stored = None
+
+        stored_volumes = (
+            stored.get("last_good", {}) if isinstance(stored, dict) else {}
+        )
+        allowed_players = set(_get_runtime_config(entry)["alexa_players"])
+        if isinstance(stored_volumes, dict):
+            for entity_id, value in stored_volumes.items():
+                if (
+                    not isinstance(entity_id, str)
+                    or entity_id not in allowed_players
+                    or isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                ):
+                    continue
+                try:
+                    volume = float(value)
+                except (OverflowError, ValueError):
+                    continue
+                if not math.isfinite(volume) or not 0 <= volume <= 1:
+                    continue
+                last_good.setdefault(entity_id, volume)
+
+        if not hass.is_running:
+            def schedule_boot_recovery(_event) -> None:
+                cancel_timer = async_call_later(
+                    hass,
+                    ALEXA_BOOT_RECOVERY_DELAY,
+                    partial(_async_boot_recovery, hass, entry),
+                )
+                entry.async_on_unload(cancel_timer)
+
+            unsubscribe = hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STARTED,
+                schedule_boot_recovery,
+            )
+            entry.async_on_unload(unsubscribe)
 
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -164,6 +224,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             SERVICE_NOTIFY,
             handle_notify,
             schema=SERVICE_NOTIFY_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_RESTORE_ALEXA_VOLUMES):
+        async def handle_restore_alexa_volumes(call: ServiceCall) -> None:
+            """Restore each available Alexa to its last-known resting volume."""
+            await _async_require_admin(hass, call)
+            active = _get_primary_entry(hass)
+            if active is None:
+                _LOGGER.error("restore_alexa_volumes called but no config entry is loaded")
+                return
+            await _async_restore_saved_volumes(hass)
+
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_RESTORE_ALEXA_VOLUMES,
+            handle_restore_alexa_volumes,
+            schema=vol.Schema({}),
         )
 
     async_register_bridge_services(hass, entry)
@@ -199,8 +276,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not remaining_entries:
         hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
         hass.services.async_remove(DOMAIN, SERVICE_RECENT_ALEXA_EMISSIONS)
+        hass.services.async_remove(DOMAIN, SERVICE_RESTORE_ALEXA_VOLUMES)
         hass.services.async_remove(DOMAIN, "whatsapp_bridge_logs")
         hass.services.async_remove(DOMAIN, "whatsapp_bridge_restart")
+        store = hass.data[DOMAIN].get(DATA_ALEXA_STORE)
+        if store is not None:
+            try:
+                await store.async_save(
+                    {
+                        "last_good": dict(
+                            hass.data[DOMAIN].get(DATA_ALEXA_LAST_GOOD_VOLUMES, {})
+                        )
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.error("Failed to save Alexa resting volumes: %s", exc)
         await async_close_bridge_sessions(hass)
         for cancel in hass.data[DOMAIN].get(DATA_ALEXA_RERESTORE_UNSUBS, {}).values():
             cancel()
@@ -227,10 +317,12 @@ __all__ = [
     "DATA_ALEXA_LAST_GOOD_VOLUMES",
     "DATA_ALEXA_LOCK",
     "DATA_ALEXA_RERESTORE_UNSUBS",
+    "DATA_ALEXA_STORE",
     "DATA_ALEXA_RESOLVER",
     "DEFAULT_EMISSION_QUERY_SECONDS",
     "MAX_EMISSION_QUERY_SECONDS",
     "SERVICE_NOTIFY_SCHEMA",
+    "SERVICE_RESTORE_ALEXA_VOLUMES",
     "async_setup_entry",
     "async_unload_entry",
     "_async_call_telegram",
