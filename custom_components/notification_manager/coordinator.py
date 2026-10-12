@@ -73,20 +73,11 @@ class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
                     "Bridge health returned HTTP %d → disconnected", resp.status
                 )
                 return SENSOR_STATE_DISCONNECTED
-        except (aiohttp.ClientConnectorError, TimeoutError):
+        except (aiohttp.ClientError, TimeoutError):
             _LOGGER.debug("Bridge unreachable → disconnected")
             return SENSOR_STATE_DISCONNECTED
         except Exception as exc:  # noqa: BLE001
             raise UpdateFailed(f"Unexpected error polling bridge health: {exc}") from exc
-
-    def update_config(
-        self, bridge_url: str, bridge_token: str, verify_ssl: bool | None = None
-    ) -> None:
-        """Update bridge credentials (called when options change)."""
-        self._bridge_url = bridge_url
-        self._bridge_token = bridge_token
-        if verify_ssl is not None:
-            self._verify_ssl = verify_ssl
 
     async def async_shutdown(self) -> None:
         """Cancel polling on unload."""

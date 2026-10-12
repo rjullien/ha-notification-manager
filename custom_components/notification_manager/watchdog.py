@@ -149,13 +149,14 @@ class EntityWatchdog:
                         )
                         minutes = int(elapsed.total_seconds() // 60)
                         emoji = "🚨" if tier == "critical" else "⚠️"
+                        status = "introuvable" if state is None else "unavailable"
                         # friendly_name is user-controlled and entity_ids are
                         # full of "_": both must be escaped, since this message
                         # is sent with a real parse_mode (see below).
                         alerts.append(
                             f"• {emoji} {escape_html(friendly)} "
                             f"(<code>{escape_html(entity_id)}</code>) "
-                            f"— unavailable depuis {minutes} min"
+                            f"— {status} depuis {minutes} min"
                         )
                         self._last_alerted[entity_id] = now
             else:

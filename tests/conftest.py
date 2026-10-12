@@ -29,9 +29,15 @@ ha_mock.loader.async_get_integration = AsyncMock()
 # imports aiohttp.resolver.DefaultResolver — both need importable stand-ins.
 aiohttp_mock = MagicMock()
 aiohttp_mock.abc.AbstractResolver = type("AbstractResolver", (), {})
-# Real exception classes: `except aiohttp.ClientConnectorError` requires a
-# BaseException subclass, a MagicMock attribute would raise TypeError.
-aiohttp_mock.ClientConnectorError = type("ClientConnectorError", (Exception,), {})
+# Real exception classes: aiohttp catch clauses require BaseException
+# subclasses, a MagicMock attribute would raise TypeError.
+aiohttp_mock.ClientError = type("ClientError", (Exception,), {})
+aiohttp_mock.ClientConnectorError = type(
+    "ClientConnectorError", (aiohttp_mock.ClientError,), {}
+)
+aiohttp_mock.ServerDisconnectedError = type(
+    "ServerDisconnectedError", (aiohttp_mock.ClientError,), {}
+)
 aiohttp_mock.InvalidURL = type("InvalidURL", (Exception,), {})
 aiohttp_mock.ClientTimeout = MagicMock
 aiohttp_resolver_mock = MagicMock()

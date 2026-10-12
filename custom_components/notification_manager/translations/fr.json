@@ -10,7 +10,8 @@
       "invalid_auth": "Token d'authentification invalide.",
       "invalid_url": "URL invalide.",
       "invalid_json": "JSON invalide — vérifiez la syntaxe.",
-      "invalid_volume": "Le volume doit être un nombre entre 0.0 et 1.0.",
+      "invalid_structure": "Structure JSON invalide pour ce champ.",
+      "invalid_volume": "Le volume doit être supérieur à 0,0 et inférieur ou égal à 1,0.",
       "invalid_number": "Doit être un entier positif.",
       "invalid_chat_ids": "IDs invalides — entrez des entiers séparés par des virgules.",
       "unknown": "Erreur inattendue."
@@ -55,7 +56,7 @@
         "data": {
           "alexa_players_json": "Players Alexa (liste JSON d'entity_ids)",
           "alexa_en_target": "Entity_id Alexa anglais",
-          "alexa_tts_volume": "Volume TTS (0.0 – 1.0)",
+          "alexa_tts_volume": "Volume TTS (supérieur à 0,0, max. 1,0)",
           "alexa_post_tts_delay": "Délai post-TTS en secondes (entier)"
         }
       },
