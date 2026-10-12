@@ -1,6 +1,6 @@
 # Plan de correction des bugs — méta-analyse (12 oct. 2026)
 
-Fusion des analyses existantes (Grok Tesla, Grok Bot, spec révisée, ma critique), confrontée au code de `main` @ 1.9.6 et complétée par un audit complet des 16 modules. Toutes les références `fichier:ligne` ont été vérifiées sur `main`.
+Fusion des analyses existantes (Grok Tesla, Grok Bot, spec révisée, ma critique, puis méta-revue Kiro), confrontée au code de `main` @ 1.9.6 et complétée par un audit complet des 16 modules. Toutes les références `fichier:ligne` ont été vérifiées sur `main`.
 
 ## 1. Analyse de l'analyse
 
@@ -23,7 +23,7 @@ Fusion des analyses existantes (Grok Tesla, Grok Bot, spec révisée, ma critiqu
 | **C** | Persistance volume + recovery au boot | Fort mais rare (restart en plein TTS) | ~100 lignes + tests |
 | **D** | Validation config + nettoyage | Faible — erreurs de saisie | variable |
 
-Ordre conseillé : **A → B → C → D**. A et B sont indépendants (fichiers disjoints sauf `notify.py`), donc parallélisables ; C dépend de A.
+Ordre conseillé : **A → B → C → D**. Documents sources déplacés dans `docs/` (hors du répertoire livré par HACS). A et B sont indépendants (fichiers disjoints sauf `notify.py`), donc parallélisables ; C dépend de A.
 
 ## 3. Détail
 
@@ -32,9 +32,10 @@ Ordre conseillé : **A → B → C → D**. A et B sont indépendants (fichiers 
 L'ordre compte : A1 doit précéder A2, sinon annuler les tâches au unload casse le verrou.
 
 - **A1 — Le verrou et le cache survivent au reload.** `__init__.py:199` fait `hass.data.pop(DOMAIN)` au dernier unload, ce qui perd `_alexa_lock`, `_alexa_last_good_volumes` et `_alexa_emissions`. Chaque reconfigure recharge l'entrée (`_async_update_listener`) : nouveau verrou pendant qu'un cycle tient encore l'ancien → deux cycles en parallèle → le second sauvegarde 0.7 comme volume de repos. Fix : au dernier unload, retirer seulement les sessions bridge et les services, garder les 3 clés partagées (`setdefault` au setup les réutilise déjà).
-- **A2 — Tâches liées à l'entrée.** `notify.py:79-137` : `hass.async_create_task` → `entry.async_create_task` pour FR, EN, téléphone, WhatsApp et groupe. Au unload, HA annule les tâches de l'entrée, et le `finally` de A3 restaure.
-- **A3 — Restore garanti.** `alexa.py:241-296` : `try/finally` autour des étapes 2–5, `await _async_restore_volumes(...)` **sans** `asyncio.shield` (le restore reste sous le verrou).
-- **A4 — Cache sain.** `alexa.py:267` : ne plus écrire `last_good` quand `reported is None` (sinon 0.5 par défaut écrase la vraie valeur). Filtrer `unknown` comme `unavailable` en amont (`alexa.py:222-225`), comme le fait déjà la boucle (`:248`).
+- **A2 — Tâches liées à l'entrée.** `notify.py:79-137` : `hass.async_create_task` → `entry.async_create_task` pour FR, téléphone, WhatsApp et groupe ; **EN → `entry.async_create_background_task`**. Au unload, HA **attend** les tâches d'entrée (≤ 10 s, `_async_process_on_unload`) — le cycle FR en vol finit et restaure — et **annule** les tâches background (EN, sans état volume). Effet assumé : un reload pendant une annonce attend jusqu'à ~8 s. *(Corrigé après la méta-revue Kiro : la version initiale disait « HA annule », c'était faux.)*
+- **A3 — Restore garanti.** `alexa.py:241-296` : `try/finally` autour des étapes 2–5, `await _async_restore_volumes(...)` **sans** `asyncio.shield` (le restore reste sous le verrou). Couvre l'arrêt de HA (annulation) et les erreurs — le reload, lui, est couvert par A2.
+- **A7 — Restore parallèle + retry avec délai.** `_async_restore_volumes` (`alexa.py:117-128`) restaure en série et réessaie sans délai. Passer en `gather` (comme la montée) et attendre 1 s avant le retry. *(Kiro §2.3/§3.1.)*
+- **A4 — Cache sain.** `alexa.py:267` : ne plus écrire `last_good` quand `reported is None` (sinon 0.5 par défaut écrase la vraie valeur). Un helper `_player_available` partagé par les **trois** sites : filtre amont (`:222-225`), boucle (`:248`) et résolveur public `_make_alexa_resolver` (`:149`).
 - **A5 — Plancher du délai.** `asyncio.sleep(max(delay, 2))` à `alexa.py:293` ; `0` reste accepté en config (test `test_zero_volume_and_delay_preserved` conservé).
 - **A6 — Re-restore différé.** Un job ~20 s après le restore, par Echo, avec **compteur de génération** (incrémenté au début de chaque cycle) : le job ne s'exécute que si aucune nouvelle génération n'a démarré, et seulement si le volume lu n'est ni le repos ni déjà corrigé. Couvre les échecs Amazon silencieux. Annulé au unload (`entry.async_on_unload`).
 
@@ -49,9 +50,11 @@ Tests à ajouter : annulation pendant le sleep → restore appelé ; unload puis
 
 ### Lot C — persistance (une PR, après A)
 
-- Marqueur `Store` par Echo `{resting, tts, ts}` écrit avant la montée, effacé après restore réussi.
-- Au boot : restaurer seulement si le volume lu ≈ `marker.tts` (sinon c'est une intervention manuelle → effacer le marqueur) ; expiration 24 h.
-- Persister `last_good` (débounce) — sans A4 la valeur empoisonnée survivrait au reboot.
+Design revu après la méta-revue Kiro §2.2 : un marqueur « cycle en cours » n'a de sens que s'il survit à un crash, donc il exigerait un `async_save()` immédiat (une écriture SD par annonce, sous le verrou) — `async_delay_save` n'est flushé qu'à l'arrêt propre. **Pas de marqueur.**
+
+- Persister `last_good` dans un `Store` (`async_delay_save`, il bouge rarement), purgé au chargement des players absents de `alexa_players` (Kiro §3.4).
+- Service `notification_manager.restore_alexa_volumes` (admin) : remet chaque player connu à son `last_good`.
+- Au démarrage (`EVENT_HOMEASSISTANT_STARTED` + délai pour qu'alexa_media remonte les volumes) : pour chaque player, restaurer **seulement si** la lecture ≈ volume TTS et `last_good` ≠ volume TTS. La lecture est fraîche (alexa_media réinterroge Amazon, l'état n'est pas restauré par HA), et si le volume de repos voulu est 0.7, `last_good` vaut 0.7 → rien n'est touché.
 - Mettre à jour le README (§ « volumes in-memory, restore manuel après restart »).
 
 ### Lot D — validation et nettoyage (au fil de l'eau)
