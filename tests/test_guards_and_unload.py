@@ -130,11 +130,18 @@ class TestUnloadEntry:
     async def test_last_entry_removes_services_and_closes_sessions(self):
         coordinator = MagicMock()
         coordinator.async_shutdown = AsyncMock()
+        lock = asyncio.Lock()
+        last_good = {"media_player.echo": 0.4}
+        pending_unsub = MagicMock()
         hass = self._make_hass({
             "entry1": {"coordinator": coordinator},
-            nm.DATA_ALEXA_LOCK: asyncio.Lock(),  # internal key must be ignored
-            nm.DATA_ALEXA_LAST_GOOD_VOLUMES: {},  # idem
+            nm.DATA_ALEXA_LOCK: lock,  # internal key must be ignored
+            nm.DATA_ALEXA_LAST_GOOD_VOLUMES: last_good,
             nm.DATA_ALEXA_EMISSIONS: AlexaEmissionLog(),  # idem
+            nm.DATA_ALEXA_GENERATIONS: {"media_player.echo": 3},
+            nm.DATA_ALEXA_RERESTORE_UNSUBS: {
+                "media_player.echo": pending_unsub,
+            },
         })
         entry = MagicMock()
         entry.entry_id = "entry1"
@@ -152,7 +159,14 @@ class TestUnloadEntry:
             "whatsapp_bridge_restart",
         }
         close.assert_awaited_once()
-        assert DOMAIN not in hass.data
+        pending_unsub.assert_called_once_with()
+        assert "entry1" not in hass.data[DOMAIN]
+        assert hass.data[DOMAIN][nm.DATA_ALEXA_LOCK] is lock
+        assert hass.data[DOMAIN][nm.DATA_ALEXA_LAST_GOOD_VOLUMES] is last_good
+        assert hass.data[DOMAIN][nm.DATA_ALEXA_LAST_GOOD_VOLUMES] == {
+            "media_player.echo": 0.4,
+        }
+        assert hass.data[DOMAIN][nm.DATA_ALEXA_RERESTORE_UNSUBS] == {}
 
     async def test_remaining_entry_keeps_services(self):
         hass = self._make_hass({
@@ -234,6 +248,8 @@ class TestMultiEntrySetup:
         # Shared house-level state still at domain root
         assert nm.DATA_ALEXA_LOCK in hass.data[DOMAIN]
         assert nm.DATA_ALEXA_EMISSIONS in hass.data[DOMAIN]
+        assert nm.DATA_ALEXA_GENERATIONS in hass.data[DOMAIN]
+        assert nm.DATA_ALEXA_RERESTORE_UNSUBS in hass.data[DOMAIN]
 
         assert registered == {
             (DOMAIN, "notify"),

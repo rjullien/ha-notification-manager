@@ -59,9 +59,9 @@ async def _async_handle_notify(
         photo_path or photo_url,
     )
 
-    # Alexa runs as detached background tasks: the FR flow holds the speakers
-    # for post_tts_delay seconds and the EN flow has its own start delay —
-    # neither should block the service call nor wait on slow WhatsApp retries.
+    # HA waits up to 10 seconds for config-entry tasks at unload, letting the
+    # FR volume cycle finish and restore. EN has no volume state, so its
+    # fire-and-forget background task is cancelled on unload.
     # Propagated to the emission log so a caller can recognise its own TTS and
     # avoid correlating against sound it produced itself.
     context_id = getattr(getattr(call, "context", None), "id", None)
@@ -76,39 +76,45 @@ async def _async_handle_notify(
     if message_alexa and alexa_selector not in (
         "aucun", "none", "off", "disable"
     ):
-        hass.async_create_task(
+        entry.async_create_task(
+            hass,
             _run_logged(
                 alexa_mod._async_send_alexa(
                     hass, entry, message_alexa, notification_alexa, context_id
                 ),
                 "Alexa TTS",
-            )
+            ),
+            "notification_manager alexa tts",
         )
 
     # message_alexa_en / alexa_en_target: unused by the maintainer; left as-is
     # (candidate for later removal). Gating vs notification_alexa unchanged.
     if message_alexa_en:
-        hass.async_create_task(
+        entry.async_create_background_task(
+            hass,
             _run_logged(
                 alexa_mod._async_send_alexa_en_delayed(
                     hass, entry, message_alexa_en, context_id
                 ),
                 "English Alexa TTS",
-            )
+            ),
+            "notification_manager alexa tts en",
         )
 
     # Phone, WhatsApp and Telegram group run concurrently and are awaited so
     # automations calling the service in blocking mode get delivery feedback.
-    # Use hass.async_create_task (same as Alexa) so HA tracks/cancels these on unload.
+    # HA awaits these config-entry tasks at unload (up to 10 seconds).
     tasks: list[asyncio.Task] = []
 
     if message_tel and tel_selector not in ("aucun", "none"):
         tasks.append(
-            hass.async_create_task(
+            entry.async_create_task(
+                hass,
                 messaging_mod._async_send_phone(
                     hass, entry, message_tel, notification_tel,
                     parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
-                )
+                ),
+                "notification_manager phone",
             )
         )
 
@@ -121,22 +127,26 @@ async def _async_handle_notify(
         bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
         bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
         tasks.append(
-            hass.async_create_task(
+            entry.async_create_task(
+                hass,
                 messaging_mod._async_send_whatsapp(
                     hass, entry, message_tel, notification_whatsapp,
                     bridge_url, bridge_token, _entry_verify_ssl(entry),
-                )
+                ),
+                "notification_manager whatsapp",
             )
         )
 
     if telegram_group:
         if message_tel or photo_path or photo_url:
             tasks.append(
-                hass.async_create_task(
+                entry.async_create_task(
+                    hass,
                     messaging_mod._async_send_telegram_group(
                         hass, entry, message_tel, telegram_group,
                         parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
-                    )
+                    ),
+                    "notification_manager telegram group",
                 )
             )
         else:

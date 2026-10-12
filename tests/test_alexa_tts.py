@@ -1,21 +1,36 @@
 """Tests for the Alexa TTS flow — lock serialisation and volume save/restore."""
 import asyncio
+import logging
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
     from notification_manager.alexa import (
         DATA_ALEXA_LAST_GOOD_VOLUMES,
+        DATA_ALEXA_GENERATIONS,
         DATA_ALEXA_LOCK,
+        DATA_ALEXA_RERESTORE_UNSUBS,
+        _async_rerestore,
+        _async_restore_volumes,
         _async_send_alexa,
         _async_send_alexa_en,
+        _make_alexa_resolver,
         _resolve_restore_volume,
         _volumes_close,
     )
-    from notification_manager.const import ALEXA_DEFAULT_VOLUME, DOMAIN
+    from notification_manager.const import (
+        ALEXA_DEFAULT_VOLUME,
+        ALEXA_MIN_POST_TTS_DELAY,
+        ALEXA_RERESTORE_DELAY,
+        ALEXA_RESTORE_RETRY_DELAY,
+        DOMAIN,
+    )
+    import notification_manager.alexa as alexa
 
 
 PLAYER = "media_player.echo_show_bedroom"
@@ -126,7 +141,7 @@ class TestAlexaVolumeCycle:
         assert log == []
 
     async def test_invalid_volume_attribute_uses_default(self):
-        """Non-numeric volume_level attribute → default volume."""
+        """Non-numeric volume_level uses default and is not cached."""
         log: list = []
         hass = _make_hass(log)
         state = MagicMock()
@@ -138,6 +153,151 @@ class TestAlexaVolumeCycle:
         await _async_send_alexa(hass, entry, "Bonjour", "show")
 
         assert log[-1][2]["volume_level"] == ALEXA_DEFAULT_VOLUME
+        assert hass.data[DOMAIN][DATA_ALEXA_LAST_GOOD_VOLUMES] == {}
+
+    async def test_invalid_volume_attribute_does_not_replace_last_good(self):
+        """An invalid live reading leaves the remembered resting value intact."""
+        log: list = []
+        hass = _make_hass(log)
+        state = MagicMock()
+        state.state = "on"
+        state.attributes = {"volume_level": "garbage"}
+        hass.states.get = MagicMock(return_value=state)
+        remembered = {PLAYER: 0.3}
+        hass.data[DOMAIN] = {DATA_ALEXA_LAST_GOOD_VOLUMES: remembered}
+
+        await _async_send_alexa(hass, _make_entry(), "Bonjour", "show")
+
+        assert remembered == {PLAYER: 0.3}
+        assert log[-1][2]["volume_level"] == 0.3
+
+    async def test_unknown_player_is_filtered_from_tts_targets(self):
+        """Unknown entities are omitted while available targets still receive TTS."""
+        log: list = []
+        hass = _make_hass(log)
+        players = [PLAYER, "media_player.echo_show_kitchen"]
+        unknown = MagicMock(state="unknown", attributes={"volume_level": 0.4})
+        available = MagicMock(state="on", attributes={"volume_level": 0.4})
+        states = {players[0]: unknown, players[1]: available}
+        hass.states.get = MagicMock(side_effect=states.get)
+
+        await _async_send_alexa(
+            hass, _make_entry(players=players), "Bonjour", "show"
+        )
+
+        tts_call = next(call for call in log if call[0] == "notify")
+        assert tts_call[2]["target"] == [players[1]]
+
+    async def test_all_unknown_players_skip_tts(self):
+        """No TTS is sent when every matching player is unknown."""
+        log: list = []
+        hass = _make_hass(log)
+        state = MagicMock(state="unknown", attributes={"volume_level": 0.4})
+        hass.states.get = MagicMock(return_value=state)
+
+        await _async_send_alexa(hass, _make_entry(), "Bonjour", "show")
+
+        assert log == []
+
+    async def test_zero_delay_uses_two_second_floor(self):
+        """A saved zero delay cannot restore before speech has time to finish."""
+        hass = _make_hass([])
+        with patch.object(alexa.asyncio, "sleep", new=AsyncMock()) as sleep:
+            await _async_send_alexa(hass, _make_entry(delay=0), "Bonjour", "show")
+
+        sleep.assert_awaited_once_with(ALEXA_MIN_POST_TTS_DELAY)
+
+    async def test_restore_retries_concurrently_after_one_second(self):
+        """All targets start restore together and a failed one retries after a pause."""
+        hass = _make_hass([])
+        players = [PLAYER, "media_player.echo_show_kitchen"]
+        attempts: dict[str, int] = {}
+        call_order: list[tuple[str, int]] = []
+        first_attempts_started = asyncio.Event()
+
+        async def set_volume(_hass, entity_id, _volume):
+            attempts[entity_id] = attempts.get(entity_id, 0) + 1
+            attempt = attempts[entity_id]
+            call_order.append((entity_id, attempt))
+            if attempt == 1:
+                if len(attempts) == len(players):
+                    first_attempts_started.set()
+                await first_attempts_started.wait()
+                return entity_id != PLAYER
+            return True
+
+        with patch.object(
+            alexa, "_async_set_volume", new=AsyncMock(side_effect=set_volume)
+        ) as set_volume_mock, patch.object(
+            alexa.asyncio, "sleep", new=AsyncMock()
+        ) as sleep:
+            await asyncio.wait_for(
+                _async_restore_volumes(hass, {player: 0.4 for player in players}),
+                timeout=1,
+            )
+
+        assert call_order == [(PLAYER, 1), (players[1], 1), (PLAYER, 2)]
+        assert {call.args[1] for call in set_volume_mock.await_args_list} == set(players)
+        sleep.assert_awaited_once_with(ALEXA_RESTORE_RETRY_DELAY)
+
+    async def test_cancellation_during_sleep_restores_all_targets_without_rerestore(self):
+        """Cancellation still restores each target and never schedules a retry."""
+        log: list = []
+        hass = _make_hass(log)
+        players = [PLAYER, "media_player.echo_show_kitchen"]
+
+        with patch.object(
+            alexa.asyncio,
+            "sleep",
+            new=AsyncMock(side_effect=asyncio.CancelledError),
+        ), patch.object(alexa, "async_call_later") as call_later:
+            with pytest.raises(asyncio.CancelledError):
+                await _async_send_alexa(
+                    hass, _make_entry(players=players), "Bonjour", "show"
+                )
+
+        restores = {
+            data["entity_id"]: data["volume_level"]
+            for domain, service, data, *_ in log
+            if domain == "media_player" and service == "volume_set"
+            and data["volume_level"] == 0.4
+        }
+        assert restores == {player: 0.4 for player in players}
+        call_later.assert_not_called()
+
+    async def test_rerestore_scheduled_per_target_and_cancelled_by_next_cycle(self):
+        """A later cycle cancels each pending job and advances its generation."""
+        log: list = []
+        hass = _make_hass(log)
+        players = [PLAYER, "media_player.echo_show_kitchen"]
+        entry = _make_entry(players=players)
+        scheduled_unsubs = [MagicMock() for _ in range(4)]
+
+        with patch.object(alexa.asyncio, "sleep", new=AsyncMock()), patch.object(
+            alexa,
+            "async_call_later",
+            side_effect=scheduled_unsubs,
+        ) as call_later:
+            await _async_send_alexa(hass, entry, "First", "show")
+            assert call_later.call_count == len(players)
+            assert all(
+                call.args[1] == ALEXA_RERESTORE_DELAY
+                for call in call_later.call_args_list
+            )
+
+            await _async_send_alexa(hass, entry, "Second", "show")
+
+        for unsubscribe in scheduled_unsubs[:2]:
+            unsubscribe.assert_called_once_with()
+        assert call_later.call_count == 2 * len(players)
+        assert hass.data[DOMAIN][DATA_ALEXA_GENERATIONS] == {
+            player: 2 for player in players
+        }
+        assert all(
+            hass.data[DOMAIN][DATA_ALEXA_RERESTORE_UNSUBS][player]
+            is scheduled_unsubs[index + 2]
+            for index, player in enumerate(players)
+        )
 
     async def test_no_targets_resolved_no_calls(self):
         """Keyword matching nothing → no service call at all."""
@@ -307,6 +467,85 @@ class TestResolveRestoreVolume:
     def test_missing_live_uses_last_good_then_default(self):
         assert _resolve_restore_volume(PLAYER, None, 0.7, {PLAYER: 0.3}) == 0.3
         assert _resolve_restore_volume(PLAYER, None, 0.7, {}) == ALEXA_DEFAULT_VOLUME
+
+
+class TestAlexaResolverAvailability:
+    """The public Alexa resolver uses the same unknown-state filter as TTS."""
+
+    def test_available_only_drops_unknown_player(self):
+        hass = MagicMock()
+        state = MagicMock(state="unknown")
+        hass.states.get = MagicMock(return_value=state)
+        entry = _make_entry()
+        resolver = _make_alexa_resolver(hass, entry)
+
+        assert resolver("show") == []
+        assert resolver("show", available_only=False) == [PLAYER]
+
+
+class TestAlexaRerestore:
+    """Generation-guarded correction after Alexa Media's delayed state update."""
+
+    @pytest.mark.parametrize(
+        (
+            "state_name",
+            "reported",
+            "stored_generation",
+            "expected_restore",
+            "expected_warning",
+        ),
+        [
+            ("on", 0.7, 4, True, True),
+            ("on", 0.4, 4, False, False),
+            ("on", 0.7, 5, False, False),
+            ("on", 0.55, 4, False, False),
+            ("unavailable", 0.7, 4, False, False),
+            ("unknown", 0.7, 4, False, False),
+            ("on", "invalid", 4, False, False),
+            (None, 0.7, 4, False, False),
+        ],
+    )
+    async def test_rerestore_only_corrects_unchanged_tts_volume(
+        self,
+        state_name,
+        reported,
+        stored_generation,
+        expected_restore,
+        expected_warning,
+        caplog,
+    ):
+        hass = MagicMock()
+        pending_unsubscribe = MagicMock()
+        state = None
+        if state_name is not None:
+            state = MagicMock(
+                state=state_name,
+                attributes={"volume_level": reported},
+            )
+        hass.states.get = MagicMock(return_value=state)
+        hass.data = {
+            DOMAIN: {
+                DATA_ALEXA_LOCK: asyncio.Lock(),
+                DATA_ALEXA_GENERATIONS: {PLAYER: stored_generation},
+                DATA_ALEXA_RERESTORE_UNSUBS: {PLAYER: pending_unsubscribe},
+            }
+        }
+
+        with patch.object(alexa, "_async_set_volume", new=AsyncMock()) as set_volume:
+            with caplog.at_level(logging.WARNING):
+                await _async_rerestore(
+                    hass, PLAYER, 0.4, generation=4, tts_volume=0.7
+                )
+
+        if expected_restore:
+            set_volume.assert_awaited_once_with(hass, PLAYER, 0.4)
+        else:
+            set_volume.assert_not_awaited()
+        assert ("still at TTS volume" in caplog.text) is expected_warning
+        if stored_generation == 4:
+            assert PLAYER not in hass.data[DOMAIN][DATA_ALEXA_RERESTORE_UNSUBS]
+        else:
+            assert hass.data[DOMAIN][DATA_ALEXA_RERESTORE_UNSUBS][PLAYER] is pending_unsubscribe
 
 
 class TestAlexaEnglish:

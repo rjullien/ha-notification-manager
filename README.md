@@ -157,7 +157,9 @@ Polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
 2. **Set** all targets to TTS volume (default `0.7`) — awaited *before* TTS so speech never starts at the old level
 3. **Send** TTS via `notify.alexa_media`
 4. **Wait** configurable delay (default `8s`)
-5. **Restore** each player to its resting volume (retry once on failure)
+5. **Restore** each player to its resting volume (retry once after 1s on failure)
+
+Restoration is guaranteed on cancellation (including HA shutdown) and errors. A 2-second minimum post-TTS delay prevents restoring before speech has finished. Twenty seconds after restore, the integration checks once for a delayed Alexa Media volume update and corrects it only if the player is still at the TTS volume.
 
 The full cycle is serialised behind a lock so overlapping `notify` calls cannot interleave. That alone is not enough: Alexa Media often leaves HA's `volume_level` stuck at the TTS level after restore returns, so the next *serialised* cycle would save TTS as the "original" and leave the speaker loud. The last-known-good cache (and treating "current == TTS volume" as suspicious when a resting volume is remembered) closes that gap. The English message (`message_alexa_en`) runs as an independent task with its own 3 s delay — it is never delayed by slow channels (e.g. WhatsApp retries).
 
