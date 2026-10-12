@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 from typing import Awaitable
 
 import aiohttp
@@ -22,6 +23,13 @@ from .telegram_text import PARSE_MODE_PLAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True)
+class _WhatsAppSendResult:
+    delivered: bool
+    refused_status: int | None = None
+
+
 async def _async_send_phone(
     hass: HomeAssistant, entry: ConfigEntry, message: str, notification_tel: str,
     parse_mode: str = "", photo_path: str = "", photo_url: str = "",
@@ -39,7 +47,7 @@ async def _async_send_phone(
             continue
         sends.append(
             _async_send_phone_target(
-                hass, target_cfg, message,
+                hass, target_key, target_cfg, message,
                 parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
             )
         )
@@ -49,23 +57,33 @@ async def _async_send_phone(
 
 
 async def _async_send_phone_target(
-    hass: HomeAssistant, target_cfg: dict, message: str,
+    hass: HomeAssistant, target_key: str, target_cfg: dict, message: str,
     parse_mode: str = "", photo_path: str = "", photo_url: str = "",
 ) -> None:
     """Send mobile push + Telegram to a single phone target."""
-    # Mobile push — blocking=True so delivery errors actually surface here.
-    mobile_service = target_cfg["mobile"]
-    domain, service = mobile_service.split(".", 1)
-    try:
-        await hass.services.async_call(
-            domain,
-            service,
-            {"message": message},
-            blocking=True,
-        )
-        _LOGGER.debug("Mobile push sent to %s", mobile_service)
-    except Exception as exc:  # noqa: BLE001
-        _LOGGER.error("Failed to send mobile push to %s: %s", mobile_service, exc)
+    mobile_service = target_cfg.get("mobile")
+    if isinstance(mobile_service, str) and mobile_service:
+        domain, sep, service = mobile_service.partition(".")
+        if not (sep and domain and service):
+            _LOGGER.warning(
+                "Invalid mobile service %r for target %s — push skipped",
+                mobile_service,
+                target_key,
+            )
+        else:
+            # Mobile push — blocking=True so delivery errors actually surface.
+            try:
+                await hass.services.async_call(
+                    domain,
+                    service,
+                    {"message": message},
+                    blocking=True,
+                )
+                _LOGGER.debug("Mobile push sent to %s", mobile_service)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.error(
+                    "Failed to send mobile push to %s: %s", mobile_service, exc
+                )
 
     # Telegram
     telegram_chat_id = target_cfg.get("telegram_chat_id")
@@ -181,6 +199,10 @@ async def _async_send_whatsapp(
     no Telegram-style ``parse_mode``. Callers' ``parse_mode`` applies to Telegram
     channels only.
     """
+    if not message or not message.strip():
+        _LOGGER.warning("WhatsApp message is empty — skipping send")
+        return
+
     if not bridge_url:
         _LOGGER.error("WhatsApp bridge URL not configured")
         return
@@ -206,12 +228,33 @@ async def _async_send_whatsapp(
         )
     )
 
-    failed = [jid for jid, ok in zip(targets, results) if not ok]
+    failed = [
+        (jid, result)
+        for jid, result in zip(targets, results)
+        if not result.delivered
+    ]
     if failed:
         # Single aggregated alert instead of one per recipient
         summary = message[:100] + ("…" if len(message) > 100 else "")
+        refused_statuses = sorted(
+            {
+                result.refused_status
+                for _, result in failed
+                if result.refused_status is not None
+            }
+        )
+        unavailable_count = sum(
+            result.refused_status is None for _, result in failed
+        )
+        if refused_statuses:
+            status_text = ", ".join(str(status) for status in refused_statuses)
+            reason = f"message refusé par le bridge (HTTP {status_text})"
+            if unavailable_count:
+                reason += f"; {unavailable_count} destinataire(s): bridge indisponible"
+        else:
+            reason = "bridge indisponible"
         alert = (
-            f"⚠️ WhatsApp bridge indisponible — message non délivré "
+            f"⚠️ WhatsApp {reason} — message non délivré "
             f"({len(failed)}/{len(targets)} destinataires): {summary}"
         )
         await _async_send_bridge_alert(hass, entry, alert)
@@ -223,8 +266,8 @@ async def _async_send_whatsapp_to_jid(
     headers: dict,
     jid: str,
     message: str,
-) -> bool:
-    """Send one WhatsApp message with retries. Returns True on success."""
+) -> _WhatsAppSendResult:
+    """Send one WhatsApp message with retries and classify refused requests."""
     last_error: Exception | None = None
     # Convert JID to phone number for GoWA bridge (groups @g.us pass through).
     phone = jid_to_phone(jid)
@@ -239,7 +282,26 @@ async def _async_send_whatsapp_to_jid(
             ) as resp:
                 if resp.status < 300:
                     _LOGGER.debug("WhatsApp sent to %s (attempt %d)", jid, attempt)
-                    return True
+                    return _WhatsAppSendResult(delivered=True)
+                rejected = (
+                    400 <= resp.status < 500
+                    and resp.status not in (408, 429)
+                )
+                if rejected:
+                    try:
+                        body = await resp.text()
+                    except Exception:  # noqa: BLE001
+                        body = ""
+                    _LOGGER.error(
+                        "WhatsApp message refused by bridge (HTTP %d) for %s: %s",
+                        resp.status,
+                        jid,
+                        body[:200],
+                    )
+                    return _WhatsAppSendResult(
+                        delivered=False,
+                        refused_status=resp.status,
+                    )
                 body = await resp.text()
                 _LOGGER.warning(
                     "WhatsApp bridge returned %d for %s (attempt %d): %s",
@@ -267,7 +329,7 @@ async def _async_send_whatsapp_to_jid(
         BRIDGE_RETRIES,
         last_error,
     )
-    return False
+    return _WhatsAppSendResult(delivered=False)
 
 
 def _resolve_whatsapp_targets(notification_whatsapp: str, whatsapp_contacts: dict) -> list[str]:

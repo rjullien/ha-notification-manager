@@ -66,6 +66,43 @@ class TestSendPhone:
         assert len(log) == 1
         assert log[0][0] == "notify"
 
+    async def test_telegram_only_target_sends_telegram_without_mobile_push(self):
+        log: list = []
+        hass = _make_hass(log)
+        entry = _make_entry(
+            phone_targets={"family": {"telegram_chat_id": 111}},
+            phone_default_targets=["family"],
+        )
+
+        await nm._async_send_phone(hass, entry, "hello", "family")
+
+        assert [(domain, service) for domain, service, *_ in log] == [
+            ("telegram_bot", "send_message")
+        ]
+        assert log[0][2]["chat_id"] == 111
+
+    async def test_invalid_mobile_service_warns_but_still_sends_telegram(self, caplog):
+        log: list = []
+        hass = _make_hass(log)
+        entry = _make_entry(
+            phone_targets={
+                "family": {"mobile": "nodot", "telegram_chat_id": 111},
+            },
+            phone_default_targets=["family"],
+        )
+
+        with caplog.at_level(logging.WARNING):
+            await nm._async_send_phone(hass, entry, "hello", "family")
+
+        assert [(domain, service) for domain, service, *_ in log] == [
+            ("telegram_bot", "send_message")
+        ]
+        assert log[0][2]["chat_id"] == 111
+        assert (
+            "Invalid mobile service 'nodot' for target family — push skipped"
+            in caplog.text
+        )
+
     async def test_unknown_target_warns_and_skips(self, caplog):
         log: list = []
         hass = _make_hass(log)
