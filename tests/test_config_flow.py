@@ -420,3 +420,44 @@ class TestReconfigureStructureValidation:
 
         assert result["errors"] == {"alexa_tts_volume": "invalid_volume"}
         flow.async_step_reconfigure_alerts.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "target_json",
+        [
+            '{"mobile": "notify.x", "telegram_chat_id": null}',
+            '{"mobile": "", "telegram_chat_id": 123}',
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_phone_target_ignores_absent_optional_field(self, target_json):
+        """None and empty optional target fields do not invalidate a valid contact."""
+        _cf, flow = self._make_flow()
+        next_step_mock = self._stub_next_step(flow, "phone")
+
+        result = await flow.async_step_reconfigure_phone(
+            {
+                "phone_targets_json": f'{{"alice": {target_json}}}',
+                "phone_default_targets": "alice",
+            }
+        )
+
+        assert result == "whatsapp"
+        next_step_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_phone_target_with_all_optional_fields_absent_is_invalid(self):
+        """A target with no usable mobile or Telegram id is rejected."""
+        _cf, flow = self._make_flow()
+        next_step_mock = self._stub_next_step(flow, "phone")
+
+        result = await flow.async_step_reconfigure_phone(
+            {
+                "phone_targets_json": (
+                    '{"alice": {"mobile": null, "telegram_chat_id": null}}'
+                ),
+                "phone_default_targets": "alice",
+            }
+        )
+
+        assert result["errors"] == {"phone_targets_json": "invalid_structure"}
+        next_step_mock.assert_not_awaited()

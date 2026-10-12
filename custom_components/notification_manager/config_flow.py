@@ -91,8 +91,8 @@ def _valid_phone_targets(value: Any) -> bool:
     for name, target in value.items():
         if not isinstance(name, str) or not isinstance(target, dict):
             return False
-        has_mobile = "mobile" in target
-        has_chat_id = "telegram_chat_id" in target
+        has_mobile = target.get("mobile") not in (None, "")
+        has_chat_id = target.get("telegram_chat_id") not in (None, "")
         if not has_mobile and not has_chat_id:
             return False
         if has_mobile and not _valid_mobile_service(target["mobile"]):
