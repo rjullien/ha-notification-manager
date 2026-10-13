@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
+from homeassistant.config_entries import ConfigEntryState  # noqa: E402
+
 from notification_manager.alexa_emissions import (  # noqa: E402
     AlexaEmissionLog,
     MESSAGE_SNIPPET_LEN,
@@ -43,6 +45,7 @@ def _make_hass(available=True):
 
 def _make_entry(players, local_players=None, delay=8):
     entry = MagicMock()
+    entry.state = ConfigEntryState.LOADED
     entry.data = {
         "alexa_players": players,
         "alexa_local_players": local_players or [],

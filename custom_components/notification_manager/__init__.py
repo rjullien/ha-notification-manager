@@ -230,10 +230,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def handle_restore_alexa_volumes(call: ServiceCall) -> None:
             """Restore each available Alexa to its last-known resting volume."""
             await _async_require_admin(hass, call)
-            active = _get_primary_entry(hass)
-            if active is None:
-                _LOGGER.error("restore_alexa_volumes called but no config entry is loaded")
-                return
             await _async_restore_saved_volumes(hass)
 
         hass.services.async_register(

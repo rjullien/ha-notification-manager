@@ -1,8 +1,15 @@
 """Shared test fixtures for notification_manager tests."""
 import sys
+from enum import Enum
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+
+class _ConfigEntryState(Enum):
+    LOADED = "loaded"
+    UNLOAD_IN_PROGRESS = "unload_in_progress"
+
 
 # Mock homeassistant modules so we can import the component without HA installed
 ha_mock = MagicMock()
@@ -12,6 +19,7 @@ ha_mock.core.ServiceCall = MagicMock
 # @callback; a MagicMock decorator would replace the real function.
 ha_mock.core.callback = lambda f: f
 ha_mock.config_entries.ConfigEntry = MagicMock
+ha_mock.config_entries.ConfigEntryState = _ConfigEntryState
 ha_mock.const = MagicMock()
 ha_mock.const.EVENT_HOMEASSISTANT_STARTED = "homeassistant_started"
 ha_mock.exceptions.Unauthorized = type("Unauthorized", (Exception,), {})

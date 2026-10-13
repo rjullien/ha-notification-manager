@@ -9,6 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
+from homeassistant.config_entries import ConfigEntryState  # noqa: E402
+
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
     import notification_manager as nm
     import notification_manager.alexa as alexa
@@ -52,6 +54,7 @@ def _make_entry(
     post_tts_delay=0,
 ):
     entry = MagicMock()
+    entry.state = ConfigEntryState.LOADED
     entry.entry_id = entry_id
     entry.data = {
         "alexa_players": players if players is not None else [PLAYER],

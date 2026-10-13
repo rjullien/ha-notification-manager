@@ -9,6 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "custom_components"))
 
+from homeassistant.config_entries import ConfigEntryState  # noqa: E402
+
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
     from notification_manager.alexa import (
         DATA_ALEXA_LAST_GOOD_VOLUMES,
@@ -98,6 +100,7 @@ def _make_hass_with_alexa_state_lag(
 
 def _make_entry(players=None, tts_volume=0.7, delay=0):
     entry = MagicMock()
+    entry.state = ConfigEntryState.LOADED
     entry.data = {
         "alexa_players": players or [PLAYER],
         "alexa_tts_volume": tts_volume,
@@ -263,6 +266,66 @@ class TestAlexaVolumeCycle:
             and data["volume_level"] == 0.4
         }
         assert restores == {player: 0.4 for player in players}
+        call_later.assert_not_called()
+
+    async def test_unloading_entry_restores_without_scheduling_rerestore(self):
+        """An in-flight cycle must not leave a timer behind during unload."""
+        log: list = []
+        hass = _make_hass(log)
+        players = [PLAYER, "media_player.echo_show_kitchen"]
+        entry = _make_entry(players=players)
+        entry.state = ConfigEntryState.UNLOAD_IN_PROGRESS
+
+        with patch.object(alexa.asyncio, "sleep", new=AsyncMock()), patch.object(
+            alexa, "async_call_later"
+        ) as call_later:
+            await _async_send_alexa(hass, entry, "Bonjour", "show")
+
+        restores = {
+            data["entity_id"]: data["volume_level"]
+            for domain, service, data, *_ in log
+            if domain == "media_player"
+            and service == "volume_set"
+            and data["volume_level"] == 0.4
+        }
+        assert restores == {player: 0.4 for player in players}
+        call_later.assert_not_called()
+
+    async def test_real_cancellation_restores_and_releases_lock_without_rerestore(self):
+        """Cancelling during the real post-TTS sleep restores every target."""
+        log: list = []
+        hass = _make_hass(log)
+        players = [PLAYER, "media_player.echo_show_kitchen"]
+        tts_sent = asyncio.Event()
+
+        async def record_call(domain, service, data, blocking=False):
+            log.append((domain, service, dict(data), blocking))
+            if domain == "notify" and service == "alexa_media":
+                tts_sent.set()
+
+        hass.services.async_call = AsyncMock(side_effect=record_call)
+        entry = _make_entry(players=players, delay=0)
+
+        with patch.object(alexa, "ALEXA_MIN_POST_TTS_DELAY", 0.05), patch.object(
+            alexa, "async_call_later"
+        ) as call_later:
+            task = asyncio.create_task(
+                _async_send_alexa(hass, entry, "Bonjour", "show")
+            )
+            await asyncio.wait_for(tts_sent.wait(), timeout=0.5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=0.5)
+
+        restores = {
+            data["entity_id"]: data["volume_level"]
+            for domain, service, data, *_ in log
+            if domain == "media_player"
+            and service == "volume_set"
+            and data["volume_level"] == 0.4
+        }
+        assert restores == {player: 0.4 for player in players}
+        assert not hass.data[DOMAIN][DATA_ALEXA_LOCK].locked()
         call_later.assert_not_called()
 
     async def test_rerestore_scheduled_per_target_and_cancelled_by_next_cycle(self):
