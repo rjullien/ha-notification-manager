@@ -132,6 +132,8 @@ class TestUnloadEntry:
         coordinator.async_shutdown = AsyncMock()
         lock = asyncio.Lock()
         last_good = {"media_player.echo": 0.4}
+        store = MagicMock()
+        store.async_save = AsyncMock()
         pending_unsub = MagicMock()
         hass = self._make_hass({
             "entry1": {"coordinator": coordinator},
@@ -142,6 +144,7 @@ class TestUnloadEntry:
             nm.DATA_ALEXA_RERESTORE_UNSUBS: {
                 "media_player.echo": pending_unsub,
             },
+            nm.DATA_ALEXA_STORE: store,
         })
         entry = MagicMock()
         entry.entry_id = "entry1"
@@ -155,9 +158,11 @@ class TestUnloadEntry:
         assert removed == {
             "notify",
             "recent_alexa_emissions",
+            "restore_alexa_volumes",
             "whatsapp_bridge_logs",
             "whatsapp_bridge_restart",
         }
+        store.async_save.assert_awaited_once_with({"last_good": last_good})
         close.assert_awaited_once()
         pending_unsub.assert_called_once_with()
         assert "entry1" not in hass.data[DOMAIN]
@@ -250,10 +255,12 @@ class TestMultiEntrySetup:
         assert nm.DATA_ALEXA_EMISSIONS in hass.data[DOMAIN]
         assert nm.DATA_ALEXA_GENERATIONS in hass.data[DOMAIN]
         assert nm.DATA_ALEXA_RERESTORE_UNSUBS in hass.data[DOMAIN]
+        assert nm.DATA_ALEXA_STORE in hass.data[DOMAIN]
 
         assert registered == {
             (DOMAIN, "notify"),
             (DOMAIN, "recent_alexa_emissions"),
+            (DOMAIN, "restore_alexa_volumes"),
             (DOMAIN, "whatsapp_bridge_logs"),
             (DOMAIN, "whatsapp_bridge_restart"),
         }

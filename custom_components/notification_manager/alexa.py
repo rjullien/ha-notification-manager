@@ -18,6 +18,7 @@ from .const import (
     ALEXA_EN_DELAY,
     ALEXA_KEYWORD_ALIASES,
     ALEXA_KEYWORD_EXCLUDES,
+    ALEXA_VOLUME_SAVE_DELAY,
     ALEXA_MIN_POST_TTS_DELAY,
     ALEXA_RERESTORE_DELAY,
     ALEXA_RESTORE_RETRY_DELAY,
@@ -42,6 +43,7 @@ DATA_ALEXA_RESOLVER = "_alexa_resolver"
 DATA_ALEXA_LAST_GOOD_VOLUMES = "_alexa_last_good_volumes"
 DATA_ALEXA_GENERATIONS = "_alexa_generations"
 DATA_ALEXA_RERESTORE_UNSUBS = "_alexa_rerestore_unsubs"
+DATA_ALEXA_STORE = "_alexa_store"
 
 # Tolerate Alexa/HA float noise when comparing volume_level to the TTS level.
 _VOLUME_EPS = 0.01
@@ -149,6 +151,79 @@ async def _async_restore_volumes(
     )
 
 
+async def _async_restore_saved_volumes(hass: HomeAssistant) -> int:
+    """Restore cached resting volumes for every currently available player."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    lock: asyncio.Lock = domain_data.setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
+    last_good: dict[str, float] = domain_data.setdefault(
+        DATA_ALEXA_LAST_GOOD_VOLUMES, {}
+    )
+
+    async with lock:
+        targets = [
+            (entity_id, volume)
+            for entity_id, volume in last_good.items()
+            if _player_available(hass.states.get(entity_id))
+        ]
+        results = await asyncio.gather(
+            *(
+                _async_set_volume(hass, entity_id, volume)
+                for entity_id, volume in targets
+            )
+        )
+
+    restored = sum(results)
+    _LOGGER.info("Restored resting volumes for %d Alexa player(s)", restored)
+    return restored
+
+
+async def _async_boot_recovery(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    _now=None,
+) -> None:
+    """Restore players still at TTS volume after HA has started."""
+    try:
+        domain_data = hass.data.get(DOMAIN)
+        if domain_data is None:
+            return
+        lock: asyncio.Lock = domain_data.setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
+        last_good: dict[str, float] = domain_data.setdefault(
+            DATA_ALEXA_LAST_GOOD_VOLUMES, {}
+        )
+
+        async with lock:
+            tts_volume = _get_runtime_config(entry)["alexa_tts_volume"]
+            restore: dict[str, float] = {}
+            for entity_id, resting in last_good.items():
+                state = hass.states.get(entity_id)
+                if not _player_available(state):
+                    continue
+                reading = _parse_volume_attr(state.attributes.get("volume_level"))
+                if (
+                    reading is None
+                    or not _volumes_close(reading, tts_volume)
+                    or _volumes_close(resting, tts_volume)
+                ):
+                    continue
+                _LOGGER.warning(
+                    "Alexa %s at TTS volume %.2f after HA start — restoring %.2f",
+                    entity_id,
+                    reading,
+                    resting,
+                )
+                restore[entity_id] = resting
+
+            await asyncio.gather(
+                *(
+                    _async_set_volume(hass, entity_id, volume)
+                    for entity_id, volume in restore.items()
+                )
+            )
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("Alexa boot volume recovery failed: %s", exc, exc_info=True)
+
+
 async def _async_rerestore(
     hass: HomeAssistant,
     entity_id: str,
@@ -194,7 +269,6 @@ async def _async_rerestore(
             entity_id,
             exc_info=True,
         )
-
 
 def _make_alexa_resolver(hass: HomeAssistant, entry: ConfigEntry):
     """Build the resolver exposed to other components.
@@ -342,6 +416,13 @@ async def _async_send_alexa(
             # previous value intact when the current attribute is unusable.
             if reported is not None:
                 last_good[entity_id] = restore_vol
+
+        store = domain_data.get(DATA_ALEXA_STORE)
+        if store is not None:
+            store.async_delay_save(
+                lambda: {"last_good": dict(last_good)},
+                ALEXA_VOLUME_SAVE_DELAY,
+            )
 
         try:
             # 2. Set volume to TTS level — blocking + awaited BEFORE the TTS is
