@@ -213,3 +213,22 @@ class TestWatchdogAlertFormatting:
 
         assert log, "no telegram_bot call recorded"
         assert log[0][2]["parse_mode"] == PARSE_MODE_HTML
+
+    async def test_alert_uses_entry_chat_ids_over_bridge_constant(self):
+        hass = MagicMock()
+        log: list = []
+
+        async def record(domain, service, data, blocking=False):
+            log.append(dict(data))
+
+        hass.services.async_call = AsyncMock(side_effect=record)
+        entry = MagicMock()
+        entry.data = {"bridge_alert_chat_ids": [111]}
+        watchdog = wd.EntityWatchdog(hass, entry)
+
+        with patch.object(wd, "WATCHDOG_TELEGRAM_CHAT_IDS", []), patch.object(
+            wd, "BRIDGE_ALERT_CHAT_IDS", [999], create=True
+        ):
+            await watchdog._async_send_alert("alert")
+
+        assert [item["chat_id"] for item in log] == [111]

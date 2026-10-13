@@ -51,7 +51,9 @@ def async_register_bridge_services(hass: HomeAssistant, _entry: ConfigEntry) -> 
     active entry dynamically via ``_get_primary_entry``.
     """
     BRIDGE_LOGS_SCHEMA = vol.Schema({
-        vol.Optional("limit", default=100): vol.All(int, vol.Range(min=1, max=500)),
+        vol.Optional("limit", default=100): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=500)
+        ),
         vol.Optional("level", default=""): vol.In(["", "error", "warn", "info"]),
     })
 
