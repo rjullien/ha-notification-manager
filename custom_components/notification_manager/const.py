@@ -65,7 +65,6 @@ ALEXA_VOLUME_SAVE_DELAY = 10
 
 # Allow alexa_media to refresh players before checking post-start volumes.
 ALEXA_BOOT_RECOVERY_DELAY = 60
-
 # Delay before sending English Alexa message (seconds)
 ALEXA_EN_DELAY = 3
 

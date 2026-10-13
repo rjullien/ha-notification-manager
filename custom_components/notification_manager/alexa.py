@@ -270,7 +270,6 @@ async def _async_rerestore(
             exc_info=True,
         )
 
-
 def _make_alexa_resolver(hass: HomeAssistant, entry: ConfigEntry):
     """Build the resolver exposed to other components.
 

@@ -35,7 +35,7 @@ class TestSendToJid:
             session, "http://b/send", {}, "33600000001@s.whatsapp.net", "msg"
         )
 
-        assert ok is True
+        assert ok.delivered is True
         assert session.post.call_count == 1
 
     async def test_retry_then_success(self):
@@ -48,7 +48,7 @@ class TestSendToJid:
                 session, "http://b/send", {}, "j@s.whatsapp.net", "msg"
             )
 
-        assert ok is True
+        assert ok.delivered is True
         assert session.post.call_count == 2
         sleep.assert_awaited_once_with(2)  # exponential backoff: 2**1
 
@@ -62,7 +62,7 @@ class TestSendToJid:
                 session, "http://b/send", {}, "j@s.whatsapp.net", "msg"
             )
 
-        assert ok is False
+        assert ok.delivered is False
         assert session.post.call_count == BRIDGE_RETRIES
 
     async def test_payload_contains_jid_and_text(self):
@@ -120,7 +120,10 @@ class TestSendWhatsapp:
 
         with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
              patch.object(nm, "_async_send_whatsapp_to_jid",
-                          new=AsyncMock(side_effect=[False, True])) as send, \
+                          new=AsyncMock(side_effect=[
+                              nm._WhatsAppSendResult(False),
+                              nm._WhatsAppSendResult(True),
+                          ])) as send, \
              patch.object(nm, "_async_send_bridge_alert", new=AsyncMock()) as alert:
             await nm._async_send_whatsapp(
                 hass, entry, "msg", "alice bob", "http://b", "tok", True
@@ -130,13 +133,47 @@ class TestSendWhatsapp:
         alert.assert_awaited_once()
         assert "1/2" in alert.call_args.args[-1]
 
+    async def test_bearer_header_sent_when_token_set(self):
+        """Bridge token → Authorization: Bearer header on the send request."""
+        hass = MagicMock()
+        entry = self._entry()
+
+        with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
+             patch.object(nm, "_async_send_whatsapp_to_jid",
+                          new=AsyncMock(
+                              return_value=nm._WhatsAppSendResult(True)
+                          )) as send:
+            await nm._async_send_whatsapp(
+                hass, entry, "msg", "alice", "http://b", "tok123", True
+            )
+
+        headers = send.call_args.args[2]
+        assert headers["Authorization"] == "Bearer tok123"
+
+    async def test_bearer_header_omitted_when_token_empty(self):
+        """No token → no Authorization header (matches other bridge calls)."""
+        hass = MagicMock()
+        entry = self._entry()
+
+        with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
+             patch.object(nm, "_async_send_whatsapp_to_jid",
+                          new=AsyncMock(
+                              return_value=nm._WhatsAppSendResult(True)
+                          )) as send:
+            await nm._async_send_whatsapp(
+                hass, entry, "msg", "alice", "http://b", "", True
+            )
+
+        headers = send.call_args.args[2]
+        assert "Authorization" not in headers
+
     async def test_all_success_no_alert(self):
         hass = MagicMock()
         entry = self._entry()
 
         with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
              patch.object(nm, "_async_send_whatsapp_to_jid",
-                          new=AsyncMock(return_value=True)), \
+                          new=AsyncMock(return_value=nm._WhatsAppSendResult(True))), \
              patch.object(nm, "_async_send_bridge_alert", new=AsyncMock()) as alert:
             await nm._async_send_whatsapp(
                 hass, entry, "msg", "alice bob", "http://b", "tok", True
@@ -158,7 +195,7 @@ class TestSendWhatsapp:
             max_in_flight = max(max_in_flight, in_flight)
             await asyncio.sleep(0)
             in_flight -= 1
-            return True
+            return nm._WhatsAppSendResult(True)
 
         with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
              patch.object(nm, "_async_send_whatsapp_to_jid", new=tracked_send):
@@ -177,6 +214,68 @@ class TestSendWhatsapp:
 
         get_session.assert_not_called()
 
+    async def test_empty_message_skips_post_and_alert(self, caplog):
+        hass = MagicMock()
+        entry = self._entry()
+        session = MagicMock()
+
+        with patch.object(nm, "async_get_bridge_session", return_value=session) as get_session, \
+             patch.object(nm, "_async_send_bridge_alert", new=AsyncMock()) as alert, \
+             caplog.at_level("WARNING"):
+            await nm._async_send_whatsapp(
+                hass, entry, " \t\n ", "alice", "http://b", "tok", True
+            )
+
+        get_session.assert_not_called()
+        session.post.assert_not_called()
+        alert.assert_not_awaited()
+        assert "WhatsApp message is empty" in caplog.text
+
+    async def test_http_400_sends_refusal_alert_without_retry(self, caplog):
+        hass = MagicMock()
+        entry = self._entry()
+        session = MagicMock()
+        session.post = MagicMock(return_value=_response_cm(400, "bad recipient"))
+
+        with patch.object(nm, "async_get_bridge_session", return_value=session), \
+             patch.object(nm, "_async_send_bridge_alert", new=AsyncMock()) as alert, \
+             patch.object(nm.asyncio, "sleep", new=AsyncMock()) as sleep, \
+             caplog.at_level("ERROR"):
+            await nm._async_send_whatsapp(
+                hass, entry, "hello", "alice", "http://b", "tok", True
+            )
+
+        assert session.post.call_count == 1
+        sleep.assert_not_awaited()
+        refusal = alert.await_args.args[-1]
+        assert "refusé" in refusal
+        assert "400" in refusal
+        assert "indisponible" not in refusal
+        assert "400" in caplog.text
+        assert "bad recipient" in caplog.text
+
+    @pytest.mark.parametrize("status", [503, 429])
+    async def test_retryable_http_statuses_retry_then_alert_unavailable(self, status):
+        hass = MagicMock()
+        entry = self._entry()
+        session = MagicMock()
+        session.post = MagicMock(
+            side_effect=[_response_cm(status) for _ in range(BRIDGE_RETRIES)]
+        )
+
+        with patch.object(nm, "async_get_bridge_session", return_value=session), \
+             patch.object(nm, "_async_send_bridge_alert", new=AsyncMock()) as alert, \
+             patch.object(nm.asyncio, "sleep", new=AsyncMock()) as sleep:
+            await nm._async_send_whatsapp(
+                hass, entry, "hello", "alice", "http://b", "tok", True
+            )
+
+        assert session.post.call_count == BRIDGE_RETRIES
+        assert [call.args[0] for call in sleep.await_args_list] == [2, 4]
+        message = alert.await_args.args[-1]
+        assert "indisponible" in message
+        assert "refusé" not in message
+
     async def test_verify_ssl_forwarded_to_session(self):
         hass = MagicMock()
         entry = self._entry()
@@ -184,7 +283,9 @@ class TestSendWhatsapp:
         with patch.object(nm, "async_get_bridge_session",
                           return_value=MagicMock()) as get_session, \
              patch.object(nm, "_async_send_whatsapp_to_jid",
-                          new=AsyncMock(return_value=True)):
+                          new=AsyncMock(
+                              return_value=nm._WhatsAppSendResult(True)
+                          )):
             await nm._async_send_whatsapp(
                 hass, entry, "msg", "alice", "http://b", "tok", False
             )

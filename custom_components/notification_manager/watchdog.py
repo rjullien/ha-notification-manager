@@ -20,7 +20,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
-    BRIDGE_ALERT_CHAT_IDS,
     DOMAIN,
     WATCHDOG_CHECK_INTERVAL_MINUTES,
     WATCHDOG_CRITICAL_ENTITIES,
@@ -31,6 +30,7 @@ from .const import (
     WATCHDOG_COOLDOWN_HOURS,
     WATCHDOG_TELEGRAM_CHAT_IDS,
 )
+from .runtime import _get_runtime_config
 from .telegram_text import PARSE_MODE_HTML, escape_html
 
 _LOGGER = logging.getLogger(__name__)
@@ -184,7 +184,10 @@ class EntityWatchdog:
 
     async def _async_send_alert(self, message: str) -> None:
         """Send alert via Telegram."""
-        chat_ids = WATCHDOG_TELEGRAM_CHAT_IDS or BRIDGE_ALERT_CHAT_IDS
+        chat_ids = (
+            WATCHDOG_TELEGRAM_CHAT_IDS
+            or _get_runtime_config(self._entry)["bridge_alert_chat_ids"]
+        )
         for chat_id in chat_ids:
             try:
                 await self._hass.services.async_call(
