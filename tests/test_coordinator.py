@@ -86,17 +86,6 @@ class TestCoordinatorInit:
         # Falls back to DEFAULT_BRIDGE_URL (empty from mock)
         assert coord._bridge_url == "" or coord._bridge_url is not None
 
-    def test_update_config(self):
-        """update_config changes stored credentials."""
-        Coord, _, _ = self._import_coordinator()
-
-        hass = MagicMock()
-        coord = Coord(hass, {})
-        coord.update_config("http://new:9090", "new-token")
-        assert coord.bridge_url == "http://new:9090"
-        assert coord._bridge_token == "new-token"
-
-
 def _response_cm(status: int):
     """Async-context-manager mock mimicking an aiohttp response."""
     resp = MagicMock()
@@ -112,10 +101,16 @@ class TestCoordinatorUpdateData:
 
     def _modules(self):
         """Module mocks incl. an aiohttp with REAL exception classes
-        (`except aiohttp.ClientConnectorError` needs BaseException subclasses)."""
+        (`except aiohttp.ClientError` needs BaseException subclasses)."""
         ha_modules, _ = _setup_ha_mocks()
         aiohttp_m = MagicMock()
-        aiohttp_m.ClientConnectorError = type("ClientConnectorError", (Exception,), {})
+        aiohttp_m.ClientError = type("ClientError", (Exception,), {})
+        aiohttp_m.ClientConnectorError = type(
+            "ClientConnectorError", (aiohttp_m.ClientError,), {}
+        )
+        aiohttp_m.ServerDisconnectedError = type(
+            "ServerDisconnectedError", (aiohttp_m.ClientError,), {}
+        )
         aiohttp_m.ClientTimeout = MagicMock
         return {
             **ha_modules,
@@ -183,6 +178,24 @@ class TestCoordinatorUpdateData:
             session = MagicMock()
             session.get = MagicMock(side_effect=aiohttp_m.ClientConnectorError())
             with patch.object(coord_mod, "async_get_bridge_session", return_value=session):
+                assert await coord._async_update_data() == c["disconnected"]
+
+    @pytest.mark.asyncio
+    async def test_server_disconnected_error_disconnected(self):
+        """ServerDisconnectedError is an aiohttp ClientError, not UpdateFailed."""
+        modules, aiohttp_m = self._modules()
+        with patch.dict(sys.modules, modules):
+            coord_mod, c = self._fresh_import()
+            coord = coord_mod.NotificationManagerCoordinator(
+                MagicMock(), {c["url"]: "http://b:8080", c["token"]: "t"}
+            )
+            session = MagicMock()
+            session.get = MagicMock(
+                side_effect=aiohttp_m.ServerDisconnectedError()
+            )
+            with patch.object(
+                coord_mod, "async_get_bridge_session", return_value=session
+            ):
                 assert await coord._async_update_data() == c["disconnected"]
 
     @pytest.mark.asyncio

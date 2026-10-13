@@ -196,6 +196,45 @@ class TestWatchdogAlertFormatting:
         assert f"<code>{entity_id}</code>" in message
         assert "<b>" in message and "*" not in message
 
+    @pytest.mark.asyncio
+    async def test_missing_state_is_labeled_introuvable(self):
+        """A removed entity is reported as introuvable, not unavailable."""
+        entity_id = "switch.renamed_entity"
+        hass = MagicMock()
+        hass.states.get = MagicMock(return_value=None)
+        entry = MagicMock()
+        entry.data = {}
+        watchdog = wd.EntityWatchdog(hass, entry)
+        watchdog._unavailable_since = {
+            entity_id: datetime.now(timezone.utc) - timedelta(hours=2)
+        }
+        watchdog._last_alerted = {}
+        watchdog._async_send_alert = AsyncMock()
+
+        await watchdog._async_check_entities(
+            [entity_id], timedelta(minutes=5), "critical"
+        )
+
+        message = watchdog._async_send_alert.await_args.args[0]
+        assert "introuvable depuis" in message
+        assert "unavailable depuis" not in message
+
+    @pytest.mark.parametrize("state_value", ["unknown", "unavailable"])
+    @pytest.mark.asyncio
+    async def test_unknown_and_unavailable_keep_existing_alert_label(self, state_value):
+        """Existing unknown/unavailable states retain their alert wording."""
+        entity_id = "switch.arrosage_vanne_1"
+        watchdog = self._watchdog_with_unavailable(entity_id, "Vanne jardin")
+        watchdog._hass.states.get.return_value.state = state_value
+
+        await watchdog._async_check_entities(
+            [entity_id], timedelta(minutes=5), "critical"
+        )
+
+        message = watchdog._async_send_alert.await_args.args[0]
+        assert "unavailable depuis" in message
+        assert "introuvable" not in message
+
     async def test_alert_sent_with_html_parse_mode(self):
         hass = MagicMock()
         log: list = []

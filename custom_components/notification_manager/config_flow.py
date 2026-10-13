@@ -52,6 +52,73 @@ def _parse_json(raw: str, field_name: str, errors: dict) -> Any | None:
         return None
 
 
+def _valid_alexa_players(value: Any) -> bool:
+    """Return whether an Alexa player list contains only non-empty strings."""
+    return isinstance(value, list) and all(
+        isinstance(entity_id, str) and bool(entity_id.strip())
+        for entity_id in value
+    )
+
+
+def _valid_mobile_service(value: Any) -> bool:
+    """Return whether a mobile service has a non-empty domain and service."""
+    if not isinstance(value, str) or value != value.strip():
+        return False
+    domain, separator, service = value.partition(".")
+    return bool(
+        separator
+        and domain
+        and service
+        and "." not in service
+        and not any(char.isspace() for char in value)
+    )
+
+
+def _valid_telegram_chat_id(value: Any) -> bool:
+    """Return whether a Telegram chat id is an integer or signed digit string."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return True
+    if not isinstance(value, str):
+        return False
+    digits = value[1:] if value.startswith("-") else value
+    return bool(digits) and all("0" <= char <= "9" for char in digits)
+
+
+def _valid_phone_targets(value: Any) -> bool:
+    """Return whether every phone target has a valid mobile service or chat id."""
+    if not isinstance(value, dict):
+        return False
+    for name, target in value.items():
+        if not isinstance(name, str) or not isinstance(target, dict):
+            return False
+        has_mobile = target.get("mobile") not in (None, "")
+        has_chat_id = target.get("telegram_chat_id") not in (None, "")
+        if not has_mobile and not has_chat_id:
+            return False
+        if has_mobile and not _valid_mobile_service(target["mobile"]):
+            return False
+        if has_chat_id and not _valid_telegram_chat_id(target["telegram_chat_id"]):
+            return False
+    return True
+
+
+def _valid_phone_default_targets(value: Any, phone_targets: dict[str, Any]) -> bool:
+    """Return whether default targets are strings naming configured phone targets."""
+    return isinstance(value, list) and all(
+        isinstance(target, str) and target in phone_targets for target in value
+    )
+
+
+def _valid_whatsapp_contacts(value: Any) -> bool:
+    """Return whether WhatsApp contacts map string names to non-empty strings."""
+    return isinstance(value, dict) and all(
+        isinstance(name, str)
+        and isinstance(contact, str)
+        and bool(contact.strip())
+        for name, contact in value.items()
+    )
+
+
 def _bridge_schema(url: str, token: str, verify_ssl: bool) -> vol.Schema:
     """Build the bridge URL/token/TLS schema shared by all bridge steps."""
     return vol.Schema(
@@ -237,10 +304,27 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "phone_targets_json",
                 errors,
             )
-            phone_defaults_raw = user_input.get("phone_default_targets", "").strip()
-            phone_default_targets = [
-                t.strip() for t in phone_defaults_raw.split(",") if t.strip()
-            ]
+            if not errors and not _valid_phone_targets(phone_targets):
+                errors["phone_targets_json"] = "invalid_structure"
+
+            phone_defaults_raw = user_input.get("phone_default_targets", "")
+            if isinstance(phone_defaults_raw, str):
+                phone_default_targets = [
+                    target.strip()
+                    for target in phone_defaults_raw.split(",")
+                    if target.strip()
+                ]
+            else:
+                phone_default_targets = []
+                errors["phone_default_targets"] = "invalid_structure"
+
+            if (
+                not errors
+                and not _valid_phone_default_targets(
+                    phone_default_targets, phone_targets
+                )
+            ):
+                errors["phone_default_targets"] = "invalid_structure"
 
             if not errors:
                 self._reconfigure_data["phone_targets"] = phone_targets
@@ -288,6 +372,9 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors,
             )
 
+            if not errors and not _valid_whatsapp_contacts(whatsapp_contacts):
+                errors["whatsapp_contacts_json"] = "invalid_structure"
+
             if not errors:
                 self._reconfigure_data["whatsapp_contacts"] = whatsapp_contacts
                 return await self.async_step_reconfigure_alexa()
@@ -321,14 +408,16 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             alexa_players_raw = user_input.get("alexa_players_json", "[]").strip()
             alexa_players = _parse_json(alexa_players_raw, "alexa_players_json", errors)
+            if not errors and not _valid_alexa_players(alexa_players):
+                errors["alexa_players_json"] = "invalid_structure"
 
             alexa_en_target: str = user_input.get("alexa_en_target", "").strip()
 
             try:
                 alexa_tts_volume = float(user_input.get("alexa_tts_volume", ALEXA_TTS_VOLUME))
-                if not 0.0 <= alexa_tts_volume <= 1.0:
+                if not 0.0 < alexa_tts_volume <= 1.0:
                     errors["alexa_tts_volume"] = "invalid_volume"
-            except (TypeError, ValueError):
+            except (OverflowError, TypeError, ValueError):
                 errors["alexa_tts_volume"] = "invalid_volume"
                 alexa_tts_volume = ALEXA_TTS_VOLUME
 
