@@ -31,6 +31,15 @@ Date : 13 octobre 2026. Basé sur `main` @ 1.10.0 (e4058909) et le `BUG_FIX_PLAN
 
 ## Ce qui manque / reste ouvert ⚠️
 
+> **Contre-vérifié contre `main` @ 1.10.0 — voir `DIAGNOSTIC_RESTANT_VERIFICATION.md`.**
+> Quatre items de cette section sont **déjà livrés** et ne doivent pas être
+> réimplémentés : §1 (B2 non-retry 4xx, `messaging.py:203/254-256/291-295`),
+> §3 (télémétrie A3/A6, `alexa.py:210/258/457`), et dans §2 `update_config`
+> (supprimé) et `alexa_tts_volume = 0.0` (interdit, `config_flow.py:418`).
+> §4 est surévalué : `test_alexa_volume_persistence.py` utilise son propre
+> `FakeStore` qui capture la charge utile ; seul l'aller-retour de bout en bout
+> manque. Le reste de la section est confirmé.
+
 ### 1. B2 — non-retry 4xx dans messaging.py (À VÉRIFIER)
 Le plan prévoyait : pas de retry sur HTTP 4xx (sauf 408/429), alerte distinguant « bridge injoignable » de « message refusé (HTTP n) », et `message` vide → warning sans envoi. Ma recherche de code n'a trouvé **aucune trace** de cette logique dans `messaging.py`. Soit c'est dans un diff que je n'ai pas vu, soit c'est passé à la trappe. **Action : relire `messaging.py` lignes ~237–275 et les tests associés.**
 
@@ -55,8 +64,8 @@ Le `BUG_FIX_PLAN` recommandait d'ajouter un `_LOGGING.warning` explicite quand A
 
 ## Priorité suggérée
 
-1. **B2** — vérifier/implémenter le non-retry 4xx (bug latent, impact moyen).
-2. **Télémétrie A3/A6** — 2 lignes de log, gain de mesure immédiat.
+1. ~~**B2** — vérifier/implémenter le non-retry 4xx (bug latent, impact moyen).~~ **Déjà livré** (lot B / #21).
+2. ~~**Télémétrie A3/A6** — 2 lignes de log, gain de mesure immédiat.~~ **Déjà livré** (`alexa.py:210/258/457`).
 3. **Décisions D** — config vide, watchdog unknown, volume 0.0, chemin EN : tranché une bonne fois.
 4. **Smoke test** sur l'instance réelle avant de tagger une release.
 5. Nettoyage `update_config` mort.
