@@ -4,10 +4,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import timedelta
+from functools import partial
 from typing import Sequence
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.event import async_call_later
 
 from .alexa_emissions import AlexaEmissionLog
 from .const import (
@@ -16,6 +18,9 @@ from .const import (
     ALEXA_EN_DELAY,
     ALEXA_KEYWORD_ALIASES,
     ALEXA_KEYWORD_EXCLUDES,
+    ALEXA_MIN_POST_TTS_DELAY,
+    ALEXA_RERESTORE_DELAY,
+    ALEXA_RESTORE_RETRY_DELAY,
     DOMAIN,
 )
 from .runtime import _get_runtime_config
@@ -35,6 +40,8 @@ DATA_ALEXA_RESOLVER = "_alexa_resolver"
 # often leaves ``volume_level`` stuck at the TTS level after a restore
 # ``volume_set`` returns, so the next cycle must not trust that attribute alone.
 DATA_ALEXA_LAST_GOOD_VOLUMES = "_alexa_last_good_volumes"
+DATA_ALEXA_GENERATIONS = "_alexa_generations"
+DATA_ALEXA_RERESTORE_UNSUBS = "_alexa_rerestore_unsubs"
 
 # Tolerate Alexa/HA float noise when comparing volume_level to the TTS level.
 _VOLUME_EPS = 0.01
@@ -56,6 +63,11 @@ def _parse_volume_attr(raw) -> float | None:
         return float(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _player_available(state) -> bool:
+    """Return whether a media-player state is usable for Alexa TTS."""
+    return state is not None and state.state not in ("unavailable", "unknown")
 
 
 def _resolve_restore_volume(
@@ -118,14 +130,70 @@ async def _async_restore_volumes(
     hass: HomeAssistant,
     original_volumes: dict[str, float],
 ) -> None:
-    """Restore resting volumes, retrying once per entity on failure."""
-    for entity_id, vol_level in original_volumes.items():
+    """Restore all resting volumes concurrently, retrying each failure once."""
+
+    async def restore_one(entity_id: str, vol_level: float) -> None:
         ok = await _async_set_volume(hass, entity_id, vol_level)
         if not ok:
             _LOGGER.warning(
                 "Retrying volume restore for %s to %.2f", entity_id, vol_level
             )
+            await asyncio.sleep(ALEXA_RESTORE_RETRY_DELAY)
             await _async_set_volume(hass, entity_id, vol_level)
+
+    await asyncio.gather(
+        *(
+            restore_one(entity_id, vol_level)
+            for entity_id, vol_level in original_volumes.items()
+        )
+    )
+
+
+async def _async_rerestore(
+    hass: HomeAssistant,
+    entity_id: str,
+    resting: float,
+    generation: int,
+    tts_volume: float,
+    _now=None,
+) -> None:
+    """Correct a delayed Alexa Media volume update if the user did not intervene."""
+    try:
+        domain_data = hass.data.get(DOMAIN)
+        if domain_data is None:
+            return
+        generations = domain_data.get(DATA_ALEXA_GENERATIONS)
+        unsubs = domain_data.get(DATA_ALEXA_RERESTORE_UNSUBS)
+        lock = domain_data.get(DATA_ALEXA_LOCK)
+        if generations is None or unsubs is None or lock is None:
+            return
+
+        async with lock:
+            if generations.get(entity_id) != generation:
+                return
+            unsubs.pop(entity_id, None)
+            state = hass.states.get(entity_id)
+            if not _player_available(state):
+                return
+            current = _parse_volume_attr(state.attributes.get("volume_level"))
+            if current is None or _volumes_close(current, resting):
+                return
+            if _volumes_close(current, tts_volume):
+                _LOGGER.warning(
+                    "Alexa %s still at TTS volume %.2f %ds after restore — "
+                    "re-restoring to %.2f",
+                    entity_id,
+                    current,
+                    ALEXA_RERESTORE_DELAY,
+                    resting,
+                )
+                await _async_set_volume(hass, entity_id, resting)
+    except Exception:  # noqa: BLE001
+        _LOGGER.warning(
+            "Failed to check delayed Alexa volume restore for %s",
+            entity_id,
+            exc_info=True,
+        )
 
 
 def _make_alexa_resolver(hass: HomeAssistant, entry: ConfigEntry):
@@ -145,8 +213,7 @@ def _make_alexa_resolver(hass: HomeAssistant, entry: ConfigEntry):
         return [
             target
             for target in targets
-            if (state := hass.states.get(target)) is not None
-            and state.state != "unavailable"
+            if _player_available(hass.states.get(target))
         ]
 
     return resolve
@@ -201,6 +268,8 @@ async def _async_send_alexa(
     also remember each player's last known good (resting) volume: Alexa Media
     can leave ``volume_level`` stuck at the TTS level after restore returns,
     and the next cycle must not treat that stale attribute as the original.
+    Restoration is guaranteed by ``finally`` on cancellation (including HA
+    shutdown) and errors during the volume/TTS cycle.
     """
     # Skip if alexa_media integration is not available on this instance
     if not hass.services.has_service("notify", "alexa_media"):
@@ -218,11 +287,8 @@ async def _async_send_alexa(
         )
         return
 
-    # Filter out unavailable players (e.g. stale _2 duplicates from re-added integrations)
-    available_targets = [
-        t for t in targets
-        if (state := hass.states.get(t)) is not None and state.state != "unavailable"
-    ]
+    # Filter unavailable/unknown players (e.g. stale _2 duplicates from re-added integrations)
+    available_targets = [t for t in targets if _player_available(hass.states.get(t))]
     if not available_targets:
         _LOGGER.warning(
             "All resolved Alexa targets are unavailable: %s (skipping TTS)", targets
@@ -237,17 +303,27 @@ async def _async_send_alexa(
     last_good: dict[str, float] = domain_data.setdefault(
         DATA_ALEXA_LAST_GOOD_VOLUMES, {}
     )
+    generations: dict[str, int] = domain_data.setdefault(DATA_ALEXA_GENERATIONS, {})
+    unsubs: dict[str, object] = domain_data.setdefault(DATA_ALEXA_RERESTORE_UNSUBS, {})
 
     async with lock:
         alexa_tts_volume = cfg["alexa_tts_volume"]
+        target_generations: dict[str, int] = {}
+        for entity_id in targets:
+            cancel = unsubs.pop(entity_id, None)
+            if cancel is not None:
+                cancel()
+            generations[entity_id] = generations.get(entity_id, 0) + 1
+            target_generations[entity_id] = generations[entity_id]
 
         # 1. Resolve resting volumes (live attribute + last-known-good memory)
         original_volumes: dict[str, float] = {}
         for entity_id in targets:
             state = hass.states.get(entity_id)
-            if state is None or state.state in ("unavailable", "unknown"):
+            if not _player_available(state):
                 _LOGGER.debug(
-                    "Alexa player %s unavailable, using default volume", entity_id
+                    "Alexa player %s unavailable or unknown, using default volume",
+                    entity_id,
                 )
                 reported = None
             else:
@@ -262,38 +338,60 @@ async def _async_send_alexa(
                 entity_id, reported, alexa_tts_volume, last_good
             )
             original_volumes[entity_id] = restore_vol
-            # Always remember the intended resting volume for the next cycle,
-            # even if a later restore ``volume_set`` fails or HA state lags.
-            last_good[entity_id] = restore_vol
+            # _resolve_restore_volume remembers valid live readings; keep a
+            # previous value intact when the current attribute is unusable.
+            if reported is not None:
+                last_good[entity_id] = restore_vol
 
-        # 2. Set volume to TTS level — blocking + awaited BEFORE the TTS is
-        #    sent, so speech can never start at the old volume.
-        await asyncio.gather(
-            *(_async_set_volume(hass, eid, alexa_tts_volume) for eid in targets)
-        )
-
-        # 3. Send TTS
         try:
-            await hass.services.async_call(
-                "notify",
-                "alexa_media",
-                {"message": message, "target": targets, "data": {"type": "tts"}},
-                blocking=True,
+            # 2. Set volume to TTS level — blocking + awaited BEFORE the TTS is
+            #    sent, so speech can never start at the old volume.
+            await asyncio.gather(
+                *(_async_set_volume(hass, eid, alexa_tts_volume) for eid in targets)
             )
-            _LOGGER.debug("Alexa TTS sent to %s", targets)
-            # Recorded only here: `targets` is resolved and availability
-            # filtered, so this is proof that speakers really spoke.
-            _record_alexa_emission(
-                hass, targets, "tts_fr", cfg, message, context_id
+
+            # 3. Send TTS
+            try:
+                await hass.services.async_call(
+                    "notify",
+                    "alexa_media",
+                    {"message": message, "target": targets, "data": {"type": "tts"}},
+                    blocking=True,
+                )
+                _LOGGER.debug("Alexa TTS sent to %s", targets)
+                # Recorded only here: `targets` is resolved and availability
+                # filtered, so this is proof that speakers really spoke.
+                _record_alexa_emission(
+                    hass, targets, "tts_fr", cfg, message, context_id
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.error("Failed to send Alexa TTS: %s", exc)
+
+            # 4. Wait for speech to finish
+            await asyncio.sleep(
+                max(cfg["alexa_post_tts_delay"], ALEXA_MIN_POST_TTS_DELAY)
             )
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.error("Failed to send Alexa TTS: %s", exc)
+        except asyncio.CancelledError:
+            _LOGGER.warning(
+                "Alexa TTS cycle cancelled — restoring volumes for %s", targets
+            )
+            raise
+        finally:
+            await _async_restore_volumes(hass, original_volumes)
 
-        # 4. Wait for speech to finish
-        await asyncio.sleep(cfg["alexa_post_tts_delay"])
-
-        # 5. Restore resting volumes (retry once per entity on failure)
-        await _async_restore_volumes(hass, original_volumes)
+        for entity_id, resting in original_volumes.items():
+            unsubs[entity_id] = async_call_later(
+                hass,
+                ALEXA_RERESTORE_DELAY,
+                partial(
+                    _async_rerestore,
+                    hass,
+                    entity_id,
+                    resting,
+                    target_generations[entity_id],
+                    alexa_tts_volume,
+                ),
+            )
 
 
 def _keyword_matches_alexa_player(keyword: str, player: str) -> bool:

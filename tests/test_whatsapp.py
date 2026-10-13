@@ -133,6 +133,36 @@ class TestSendWhatsapp:
         alert.assert_awaited_once()
         assert "1/2" in alert.call_args.args[-1]
 
+    async def test_bearer_header_sent_when_token_set(self):
+        """Bridge token → Authorization: Bearer header on the send request."""
+        hass = MagicMock()
+        entry = self._entry()
+
+        with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
+             patch.object(nm, "_async_send_whatsapp_to_jid",
+                          new=AsyncMock(return_value=True)) as send:
+            await nm._async_send_whatsapp(
+                hass, entry, "msg", "alice", "http://b", "tok123", True
+            )
+
+        headers = send.call_args.args[2]
+        assert headers["Authorization"] == "Bearer tok123"
+
+    async def test_bearer_header_omitted_when_token_empty(self):
+        """No token → no Authorization header (matches other bridge calls)."""
+        hass = MagicMock()
+        entry = self._entry()
+
+        with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
+             patch.object(nm, "_async_send_whatsapp_to_jid",
+                          new=AsyncMock(return_value=True)) as send:
+            await nm._async_send_whatsapp(
+                hass, entry, "msg", "alice", "http://b", "", True
+            )
+
+        headers = send.call_args.args[2]
+        assert "Authorization" not in headers
+
     async def test_all_success_no_alert(self):
         hass = MagicMock()
         entry = self._entry()
