@@ -197,6 +197,11 @@ async def _async_send_whatsapp(
     headers = {
         "Content-Type": "application/json",
     }
+    # Bearer auth matches the pattern used by the health check, logs and
+    # restart endpoints; bridges without auth (e.g. GoWA over Tailscale)
+    # ignore it. Omitted entirely when no token is configured.
+    if bridge_token:
+        headers["Authorization"] = f"Bearer {bridge_token}"
     url = bridge_url.rstrip("/") + BRIDGE_SEND_ENDPOINT
 
     results = await asyncio.gather(
