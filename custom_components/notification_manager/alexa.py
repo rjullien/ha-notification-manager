@@ -7,7 +7,7 @@ from datetime import timedelta
 from functools import partial
 from typing import Sequence
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_call_later
 
@@ -460,19 +460,26 @@ async def _async_send_alexa(
         finally:
             await _async_restore_volumes(hass, original_volumes)
 
-        for entity_id, resting in original_volumes.items():
-            unsubs[entity_id] = async_call_later(
-                hass,
-                ALEXA_RERESTORE_DELAY,
-                partial(
-                    _async_rerestore,
-                    hass,
-                    entity_id,
-                    resting,
-                    target_generations[entity_id],
-                    alexa_tts_volume,
-                ),
+        if entry.state is not ConfigEntryState.LOADED:
+            _LOGGER.debug(
+                "Skipping Alexa re-restore scheduling for entry %s in state %s",
+                entry.entry_id,
+                entry.state,
             )
+        else:
+            for entity_id, resting in original_volumes.items():
+                unsubs[entity_id] = async_call_later(
+                    hass,
+                    ALEXA_RERESTORE_DELAY,
+                    partial(
+                        _async_rerestore,
+                        hass,
+                        entity_id,
+                        resting,
+                        target_generations[entity_id],
+                        alexa_tts_volume,
+                    ),
+                )
 
 
 def _keyword_matches_alexa_player(keyword: str, player: str) -> bool:

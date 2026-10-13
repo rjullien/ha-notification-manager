@@ -52,7 +52,7 @@ Tests à ajouter : annulation pendant le sleep → restore appelé ; unload puis
 
 Design revu après la méta-revue Kiro §2.2 : un marqueur « cycle en cours » n'a de sens que s'il survit à un crash, donc il exigerait un `async_save()` immédiat (une écriture SD par annonce, sous le verrou) — `async_delay_save` n'est flushé qu'à l'arrêt propre. **Pas de marqueur.**
 
-- Persister `last_good` dans un `Store` (`async_delay_save`, il bouge rarement), purgé au chargement des players absents de `alexa_players` (Kiro §3.4).
+- Persister `last_good` dans un `Store` (`async_delay_save`, il bouge rarement), purgé au chargement des players absents de `alexa_players` (Kiro §3.4). Le délai de 10 s est un debounce : chaque appel repousse l’écriture, donc des annonces espacées de moins de 10 s la différeront; HA flush à l’arrêt propre. Un crash ne perd que les derniers volumes de repos, et la récupération au démarrage relit de toute façon les volumes courants.
 - Service `notification_manager.restore_alexa_volumes` (admin) : remet chaque player connu à son `last_good`.
 - Au démarrage (`EVENT_HOMEASSISTANT_STARTED` + délai pour qu'alexa_media remonte les volumes) : pour chaque player, restaurer **seulement si** la lecture ≈ volume TTS et `last_good` ≠ volume TTS. La lecture est fraîche (alexa_media réinterroge Amazon, l'état n'est pas restauré par HA), et si le volume de repos voulu est 0.7, `last_good` vaut 0.7 → rien n'est touché.
 - Mettre à jour le README (§ « volumes in-memory, restore manuel après restart »).
