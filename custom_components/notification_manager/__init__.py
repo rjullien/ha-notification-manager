@@ -22,6 +22,8 @@ Shared across all entries (intentional):
 - ``DATA_ALEXA_LOCK`` — one volume save/restore lock for the house
 - ``DATA_ALEXA_EMISSIONS`` — one in-memory emission log
 - ``DATA_ALEXA_LAST_GOOD_VOLUMES`` — resting-volume cache per media_player
+- ``DATA_ALEXA_GENERATIONS`` / ``DATA_ALEXA_RERESTORE_UNSUBS`` — deferred
+  volume recovery jobs, retained across entry reloads
 """
 from __future__ import annotations
 
@@ -37,8 +39,10 @@ from homeassistant.helpers import config_validation as cv
 
 from .alexa import (
     DATA_ALEXA_EMISSIONS,
+    DATA_ALEXA_GENERATIONS,
     DATA_ALEXA_LAST_GOOD_VOLUMES,
     DATA_ALEXA_LOCK,
+    DATA_ALEXA_RERESTORE_UNSUBS,
     DATA_ALEXA_RESOLVER,
     DEFAULT_EMISSION_QUERY_SECONDS,
     MAX_EMISSION_QUERY_SECONDS,
@@ -126,6 +130,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Shared across entries: one lock / emission log / volume cache for the house.
     hass.data[DOMAIN].setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
     hass.data[DOMAIN].setdefault(DATA_ALEXA_LAST_GOOD_VOLUMES, {})
+    hass.data[DOMAIN].setdefault(DATA_ALEXA_GENERATIONS, {})
+    hass.data[DOMAIN].setdefault(DATA_ALEXA_RERESTORE_UNSUBS, {})
     # In-memory only, shared by all entries: consumers ask "did a speaker in
     # this house just talk?" instead of re-implementing target resolution.
     hass.data[DOMAIN].setdefault(
@@ -196,7 +202,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.services.async_remove(DOMAIN, "whatsapp_bridge_logs")
         hass.services.async_remove(DOMAIN, "whatsapp_bridge_restart")
         await async_close_bridge_sessions(hass)
-        hass.data.pop(DOMAIN, None)
+        for cancel in hass.data[DOMAIN].get(DATA_ALEXA_RERESTORE_UNSUBS, {}).values():
+            cancel()
+        hass.data[DOMAIN].get(DATA_ALEXA_RERESTORE_UNSUBS, {}).clear()
 
     return unload_ok
 
@@ -215,8 +223,10 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 # owning module (``alexa``, ``messaging``, ``runtime``, ``notify``) for new code.
 __all__ = [
     "DATA_ALEXA_EMISSIONS",
+    "DATA_ALEXA_GENERATIONS",
     "DATA_ALEXA_LAST_GOOD_VOLUMES",
     "DATA_ALEXA_LOCK",
+    "DATA_ALEXA_RERESTORE_UNSUBS",
     "DATA_ALEXA_RESOLVER",
     "DEFAULT_EMISSION_QUERY_SECONDS",
     "MAX_EMISSION_QUERY_SECONDS",

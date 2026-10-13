@@ -51,6 +51,15 @@ ALEXA_DEFAULT_VOLUME = 0.5
 # Delay after sending TTS before restoring volumes (seconds)
 ALEXA_POST_TTS_DELAY = 8
 
+# Floor so a zero delay cannot cut speech off before volume restore.
+ALEXA_MIN_POST_TTS_DELAY = 2
+
+# Re-check Alexa volume after delayed media-player state updates (seconds).
+ALEXA_RERESTORE_DELAY = 20
+
+# Pause before retrying a failed volume restore (seconds).
+ALEXA_RESTORE_RETRY_DELAY = 1
+
 # Delay before sending English Alexa message (seconds)
 ALEXA_EN_DELAY = 3
 

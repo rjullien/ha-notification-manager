@@ -44,6 +44,7 @@ def _make_hass(created: list):
     """hass mock whose async_create_task actually schedules coroutines."""
     hass = MagicMock()
     hass.data = {}
+    hass._created_tasks = created
 
     def create_task(coro):
         task = asyncio.ensure_future(coro)
@@ -61,6 +62,14 @@ def _make_entry(verify_ssl=True):
         "bridge_token": "tok",
         "verify_ssl": verify_ssl,
     }
+
+    def create_entry_task(hass, coro, name=None, eager_start=True):
+        task = asyncio.ensure_future(coro)
+        hass._created_tasks.append(task)
+        return task
+
+    entry.async_create_task = MagicMock(side_effect=create_entry_task)
+    entry.async_create_background_task = MagicMock(side_effect=create_entry_task)
     return entry
 
 
@@ -178,7 +187,7 @@ class TestVerifySslPropagation:
         """Pre-1.6.0 entries without the flag → secure default (True)."""
         created: list = []
         hass = _make_hass(created)
-        entry = MagicMock()
+        entry = _make_entry()
         entry.data = {"bridge_url": "http://b", "bridge_token": "t"}  # no verify_ssl
         call = _make_call(message_tel="hello", notification_whatsapp="alice",
                           notification_tel="none")
@@ -326,15 +335,18 @@ class TestSelectorWhitespace:
         wa.assert_awaited_once()
 
 
-class TestMessagingUsesAsyncCreateTask:
-    """Phone / WhatsApp / Telegram must use hass.async_create_task, not ensure_future."""
+class TestConfigEntryUsesAsyncCreateTask:
+    """Every notification task belongs to its config entry."""
 
-    async def test_phone_wa_telegram_scheduled_via_hass(self):
+    async def test_alexa_and_messaging_tasks_are_entry_owned(self):
         created: list = []
         hass = _make_hass(created)
         entry = _make_entry()
         call = _make_call(
             message_tel="hello",
+            message_alexa="bonjour",
+            message_alexa_en="good night",
+            notification_alexa="show",
             notification_tel="alice",
             notification_whatsapp="alice",
             telegram_group="family",
@@ -342,11 +354,25 @@ class TestMessagingUsesAsyncCreateTask:
 
         with patch.object(messaging, "_async_send_phone", new=AsyncMock()), \
              patch.object(messaging, "_async_send_whatsapp", new=AsyncMock()), \
-             patch.object(messaging, "_async_send_telegram_group", new=AsyncMock()):
+             patch.object(messaging, "_async_send_telegram_group", new=AsyncMock()), \
+             patch.object(alexa, "_async_send_alexa", new=AsyncMock()), \
+             patch.object(alexa, "_async_send_alexa_en_delayed", new=AsyncMock()):
             await notify._async_handle_notify(hass, entry, call)
             await asyncio.gather(*created)
 
-        # Three messaging channels + no Alexa → exactly 3 hass tasks.
-        # (Previously these used asyncio.ensure_future and bypassed HA's registry.)
-        assert hass.async_create_task.call_count == 3
-        assert len(created) == 3
+        assert entry.async_create_task.call_count == 4
+        assert [
+            call.args[2] for call in entry.async_create_task.call_args_list
+        ] == [
+            "notification_manager alexa tts",
+            "notification_manager phone",
+            "notification_manager whatsapp",
+            "notification_manager telegram group",
+        ]
+        entry.async_create_background_task.assert_called_once()
+        assert (
+            entry.async_create_background_task.call_args.args[2]
+            == "notification_manager alexa tts en"
+        )
+        hass.async_create_task.assert_not_called()
+        assert len(created) == 5
