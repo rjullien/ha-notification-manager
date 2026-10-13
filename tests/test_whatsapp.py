@@ -140,7 +140,9 @@ class TestSendWhatsapp:
 
         with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
              patch.object(nm, "_async_send_whatsapp_to_jid",
-                          new=AsyncMock(return_value=True)) as send:
+                          new=AsyncMock(
+                              return_value=nm._WhatsAppSendResult(True)
+                          )) as send:
             await nm._async_send_whatsapp(
                 hass, entry, "msg", "alice", "http://b", "tok123", True
             )
@@ -155,7 +157,9 @@ class TestSendWhatsapp:
 
         with patch.object(nm, "async_get_bridge_session", return_value=MagicMock()), \
              patch.object(nm, "_async_send_whatsapp_to_jid",
-                          new=AsyncMock(return_value=True)) as send:
+                          new=AsyncMock(
+                              return_value=nm._WhatsAppSendResult(True)
+                          )) as send:
             await nm._async_send_whatsapp(
                 hass, entry, "msg", "alice", "http://b", "", True
             )
