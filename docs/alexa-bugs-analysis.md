@@ -71,9 +71,29 @@ Le resolver Alexa et le log d'émissions restent utiles pour les consommateurs e
 
 Gain modeste mais réel au boot : moins d'allocations, pas de lecture disque du store, pas de timer planifié inutile. Sur un P3 c'est le genre de détail qui compte sur la durée.
 
+## Note 5 — Principe général : initialisation conditionnelle par canal (optimisation P3)
+
+### Principe
+
+Le composant gère plusieurs canaux indépendants : Alexa, WhatsApp (bridge + coordinator + sensor), téléphone/Telegram, watchdog. Chacun a son empreinte mémoire et CPU. Sur un P3, on ne doit payer que pour ce qui est réellement configuré.
+
+Règle : si un canal n'est pas déclaré dans la config, son empreinte mémoire et ses ressources ne doivent pas être allouées.
+
+### Application concrète
+
+- **Pas d'Alexa** (`alexa_players` vide) : pas de lock volume, pas de dicts last_good/generations/rerestore, pas de store disque, pas de boot recovery planifié. Le resolver et le log d'émissions peuvent rester (utiles aux consommateurs externes) mais tout le reste est du poids mort.
+- **Pas de WhatsApp** (pas de bridge_url configuré) : pas de coordinator de polling, pas de sensor de statut bridge, pas de sessions HTTP dédiées au bridge. Le coordinator poll le endpoint /health toutes les cinq minutes même sans bridge utile — c'est du CPU et du réseau gaspillés.
+- **Pas de téléphone/Telegram** : pas de phone_targets à résoudre, mais c'est déjà léger.
+- **Watchdog** : ne démarre que s'il y a au moins une entité à monitorer.
+
+### Impact attendu
+
+Sur un P3 sans Alexa ni WhatsApp, le composant se réduit à un handler notify minimal : parse des arguments, dispatch éventuel. C'est l'idéal pour du matériel limité. Le principe s'étend à tout futur canal : chaque ajout doit être conditionnel à sa présence en config.
+
 ## Notes générales
 
 - Le boot recovery à soixante secondes couvre déjà le cas du bug 2, donc c'est un fallback acceptable.
 - Le bug 1 est le plus sérieux des deux : une exception inattendue sur une seule enceinte peut laisser toutes les autres au volume TTS.
 - Le bug 3 est documenté pour traçabilité mais explicitement hors scope.
 - La note 4 est une optimisation, pas un bug : le composant fonctionne sans, mais c'est du gaspillage de ressources sur du matériel limité.
+- La note 5 généralise le principe de la note 4 à tous les canaux du composant.
