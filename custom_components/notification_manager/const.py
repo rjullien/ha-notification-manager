@@ -1,6 +1,8 @@
 """Constants for the Notification Manager integration."""
 
 DOMAIN = "notification_manager"
+DATA_ALEXA_WAITERS = "_alexa_waiters"
+DATA_ALEXA_PENDING_RESTORE = "_alexa_pending_restore"
 CONF_BRIDGE_URL = "bridge_url"
 CONF_BRIDGE_TOKEN = "bridge_token"
 CONF_VERIFY_SSL = "verify_ssl"

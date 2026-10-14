@@ -18,7 +18,9 @@ with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}
         DATA_ALEXA_LAST_GOOD_VOLUMES,
         DATA_ALEXA_GENERATIONS,
         DATA_ALEXA_LOCK,
+        DATA_ALEXA_PENDING_RESTORE,
         DATA_ALEXA_RERESTORE_UNSUBS,
+        DATA_ALEXA_WAITERS,
         _estimate_speech_seconds,
         _async_rerestore,
         _async_restore_volumes,
@@ -100,6 +102,41 @@ def _make_hass_with_alexa_state_lag(
     hass.services.async_call = AsyncMock(side_effect=record)
     hass.states.get = MagicMock(return_value=state)
     return hass, attrs
+
+
+def _make_queued_hass(initial_volumes: dict[str, float], messages: list[str]):
+    """Build a hass mock that tracks live volume updates and TTS completion."""
+    hass = MagicMock()
+    hass.data = {}
+    call_log: list = []
+    states = {}
+    for entity_id, volume in initial_volumes.items():
+        state = MagicMock()
+        state.state = "on"
+        state.attributes = {"volume_level": volume}
+        states[entity_id] = state
+    tts_events = {message: asyncio.Event() for message in messages}
+
+    async def record(domain, service, data, blocking=False):
+        call_log.append((domain, service, dict(data), blocking))
+        if domain == "media_player" and service == "volume_set":
+            states[data["entity_id"]].attributes["volume_level"] = data[
+                "volume_level"
+            ]
+        elif domain == "notify" and service == "alexa_media":
+            tts_events[data["message"]].set()
+
+    hass.services.async_call = AsyncMock(side_effect=record)
+    hass.states.get = MagicMock(side_effect=states.get)
+    return hass, call_log, tts_events
+
+
+async def _wait_for_alexa_waiter(hass, count: int = 1):
+    async def wait():
+        while hass.data.get(DOMAIN, {}).get(DATA_ALEXA_WAITERS, 0) < count:
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(wait(), timeout=1)
 
 
 def _make_entry(players=None, tts_volume=0.7, delay=0):
@@ -361,31 +398,6 @@ class TestAlexaVolumeCycle:
         assert {call.args[1] for call in set_volume_mock.await_args_list} == set(players)
         sleep.assert_awaited_once_with(ALEXA_RESTORE_RETRY_DELAY)
 
-    async def test_cancellation_during_sleep_restores_all_targets_without_rerestore(self):
-        """Cancellation still restores each target and never schedules a retry."""
-        log: list = []
-        hass = _make_hass(log)
-        players = [PLAYER, "media_player.echo_show_kitchen"]
-
-        with patch.object(
-            alexa.asyncio,
-            "sleep",
-            new=AsyncMock(side_effect=asyncio.CancelledError),
-        ), patch.object(alexa, "async_call_later") as call_later:
-            with pytest.raises(asyncio.CancelledError):
-                await _async_send_alexa(
-                    hass, _make_entry(players=players), "Bonjour", "show"
-                )
-
-        restores = {
-            data["entity_id"]: data["volume_level"]
-            for domain, service, data, *_ in log
-            if domain == "media_player" and service == "volume_set"
-            and data["volume_level"] == 0.4
-        }
-        assert restores == {player: 0.4 for player in players}
-        call_later.assert_not_called()
-
     async def test_unloading_entry_restores_without_scheduling_rerestore(self):
         """An in-flight cycle must not leave a timer behind during unload."""
         log: list = []
@@ -409,7 +421,7 @@ class TestAlexaVolumeCycle:
         assert restores == {player: 0.4 for player in players}
         call_later.assert_not_called()
 
-    async def test_real_cancellation_restores_and_releases_lock_without_rerestore(self):
+    async def test_real_cancellation_restores_and_schedules_rerestore(self):
         """Cancelling during the real post-TTS sleep restores every target."""
         log: list = []
         hass = _make_hass(log)
@@ -444,7 +456,7 @@ class TestAlexaVolumeCycle:
         }
         assert restores == {player: 0.4 for player in players}
         assert not hass.data[DOMAIN][DATA_ALEXA_LOCK].locked()
-        call_later.assert_not_called()
+        assert call_later.call_count == len(players)
 
     async def test_rerestore_scheduled_per_target_and_cancelled_by_next_cycle(self):
         """A later cycle cancels each pending job and advances its generation."""
@@ -518,29 +530,33 @@ class TestAlexaVolumeCycle:
 class TestAlexaLockSerialisation:
     """Overlapping notify calls must not capture the TTS volume as original."""
 
-    async def test_concurrent_cycles_are_serialised(self):
-        """Two concurrent sends run as full back-to-back cycles, never interleaved."""
+    async def test_concurrent_cycles_are_serialised_and_restores_coalesce(self):
+        """Queued sends are serialized, then restored together."""
         log: list = []
         hass = _make_hass(log, volume=0.4)
         entry = _make_entry(delay=0)
 
-        await asyncio.gather(
-            _async_send_alexa(hass, entry, "msg1", "show"),
-            _async_send_alexa(hass, entry, "msg2", "show"),
-        )
+        with patch.object(
+            alexa, "_estimate_speech_seconds", return_value=0.01
+        ), patch.object(alexa, "ALEXA_MIN_POST_TTS_DELAY", 0.01):
+            await asyncio.wait_for(
+                asyncio.gather(
+                    _async_send_alexa(hass, entry, "msg1", "show"),
+                    _async_send_alexa(hass, entry, "msg2", "show"),
+                ),
+                timeout=1,
+            )
 
         services = [(d, s) for d, s, *_ in log]
         assert services == [
             ("media_player", "volume_set"),  # cycle 1: set TTS
             ("notify", "alexa_media"),       # cycle 1: TTS
-            ("media_player", "volume_set"),  # cycle 1: restore
             ("media_player", "volume_set"),  # cycle 2: set TTS
             ("notify", "alexa_media"),       # cycle 2: TTS
-            ("media_player", "volume_set"),  # cycle 2: restore
+            ("media_player", "volume_set"),  # final restore
         ]
-        # Both restores use the true original (0.4), never the TTS level (0.7)
-        restores = [log[2][2]["volume_level"], log[5][2]["volume_level"]]
-        assert restores == [0.4, 0.4]
+        # The single restore uses the true original (0.4), never 0.7.
+        assert log[-1][2]["volume_level"] == 0.4
 
     async def test_lock_is_shared_via_hass_data(self):
         """The lock is created once under hass.data[DOMAIN]."""
@@ -596,7 +612,7 @@ class TestAlexaStaleStateRace:
             for _, s, d, *_ in log
             if s == "volume_set" and not _volumes_close(d["volume_level"], 0.7)
         ]
-        assert restores == [0.4, 0.4]
+        assert restores == [0.4]
 
     async def test_failed_restore_still_uses_last_good_next_cycle(self):
         """A failed restore leaves the device loud; next cycle must heal it."""
@@ -757,3 +773,194 @@ class TestAlexaEnglish:
         assert args[0] == "notify"
         assert args[2]["target"] == ["media_player.english_echo"]
         assert kwargs.get("blocking") is True
+
+
+class TestQueuedAlexaVolumeCycles:
+    async def test_same_echo_is_restored_once_to_original_volume(self):
+        hass, call_log, tts_events = _make_queued_hass(
+            {PLAYER: 0.4}, ["cycle-one", "cycle-two"]
+        )
+        entry = _make_entry()
+
+        with patch.object(
+            alexa, "_estimate_speech_seconds", return_value=0.05
+        ), patch.object(
+            alexa, "ALEXA_MIN_POST_TTS_DELAY", 0.05
+        ), patch.object(alexa, "async_call_later") as call_later:
+            first = asyncio.create_task(
+                _async_send_alexa(hass, entry, "cycle-one", "show")
+            )
+            await asyncio.wait_for(tts_events["cycle-one"].wait(), timeout=1)
+            second = asyncio.create_task(
+                _async_send_alexa(hass, entry, "cycle-two", "show")
+            )
+            await _wait_for_alexa_waiter(hass)
+            hass.data[DOMAIN][DATA_ALEXA_LAST_GOOD_VOLUMES].pop(PLAYER)
+
+            await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
+
+        volume_sets = [
+            (index, data["volume_level"])
+            for index, (domain, service, data, _) in enumerate(call_log)
+            if domain == "media_player"
+            and service == "volume_set"
+            and data["entity_id"] == PLAYER
+        ]
+        tts_indices = [
+            index
+            for index, (domain, service, _, _) in enumerate(call_log)
+            if domain == "notify" and service == "alexa_media"
+        ]
+        assert [volume for _, volume in volume_sets] == [0.7, 0.7, 0.4]
+        assert volume_sets[-1][0] > tts_indices[-1]
+        assert hass.data[DOMAIN][DATA_ALEXA_LAST_GOOD_VOLUMES].get(PLAYER) is None
+        assert hass.data[DOMAIN][DATA_ALEXA_PENDING_RESTORE] == {}
+        assert hass.data[DOMAIN][DATA_ALEXA_WAITERS] == 0
+        call_later.assert_called_once()
+
+    async def test_different_echoes_restore_together_after_last_cycle(self):
+        echo_a = "media_player.echo_alpha"
+        echo_b = "media_player.echo_beta"
+        hass, call_log, tts_events = _make_queued_hass(
+            {echo_a: 0.4, echo_b: 0.2}, ["cycle-a", "cycle-b"]
+        )
+        entry = _make_entry(players=[echo_a, echo_b])
+
+        with patch.object(
+            alexa, "_estimate_speech_seconds", return_value=0.05
+        ), patch.object(
+            alexa, "ALEXA_MIN_POST_TTS_DELAY", 0.05
+        ), patch.object(alexa, "async_call_later"):
+            first = asyncio.create_task(
+                _async_send_alexa(hass, entry, "cycle-a", "alpha")
+            )
+            await asyncio.wait_for(tts_events["cycle-a"].wait(), timeout=1)
+            second = asyncio.create_task(
+                _async_send_alexa(hass, entry, "cycle-b", "beta")
+            )
+            await _wait_for_alexa_waiter(hass)
+            await asyncio.wait_for(first, timeout=1)
+
+            assert not any(
+                domain == "media_player"
+                and service == "volume_set"
+                and data["entity_id"] == echo_a
+                and data["volume_level"] == 0.4
+                for domain, service, data, _ in call_log
+            )
+
+            await asyncio.wait_for(second, timeout=1)
+
+        restores = {
+            data["entity_id"]: data["volume_level"]
+            for domain, service, data, _ in call_log
+            if domain == "media_player"
+            and service == "volume_set"
+            and data["volume_level"] != 0.7
+        }
+        assert restores == {echo_a: 0.4, echo_b: 0.2}
+
+    async def test_cancelled_active_cycle_restores_before_waiting_cycle(self):
+        hass, call_log, tts_events = _make_queued_hass(
+            {PLAYER: 0.4}, ["cycle-one", "cycle-two"]
+        )
+        entry = _make_entry()
+
+        with patch.object(
+            alexa, "_estimate_speech_seconds", return_value=0.05
+        ), patch.object(
+            alexa, "ALEXA_MIN_POST_TTS_DELAY", 0.05
+        ), patch.object(alexa, "async_call_later"):
+            first = asyncio.create_task(
+                _async_send_alexa(hass, entry, "cycle-one", "show")
+            )
+            await asyncio.wait_for(tts_events["cycle-one"].wait(), timeout=1)
+            second = asyncio.create_task(
+                _async_send_alexa(hass, entry, "cycle-two", "show")
+            )
+            await _wait_for_alexa_waiter(hass)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(first, timeout=1)
+            await asyncio.wait_for(tts_events["cycle-two"].wait(), timeout=1)
+
+            first_tts = next(
+                index
+                for index, (domain, service, data, _) in enumerate(call_log)
+                if domain == "notify"
+                and service == "alexa_media"
+                and data["message"] == "cycle-one"
+            )
+            second_tts = next(
+                index
+                for index, (domain, service, data, _) in enumerate(call_log)
+                if domain == "notify"
+                and service == "alexa_media"
+                and data["message"] == "cycle-two"
+            )
+            assert any(
+                index > first_tts
+                and index < second_tts
+                and domain == "media_player"
+                and service == "volume_set"
+                and data["entity_id"] == PLAYER
+                and data["volume_level"] == 0.4
+                for index, (domain, service, data, _) in enumerate(call_log)
+            )
+            await asyncio.wait_for(second, timeout=1)
+
+    async def test_cancelled_waiter_does_not_strand_running_cycle_restore(self):
+        hass, call_log, tts_events = _make_queued_hass(
+            {PLAYER: 0.4}, ["cycle-one", "cycle-two"]
+        )
+        entry = _make_entry()
+
+        with patch.object(
+            alexa, "_estimate_speech_seconds", return_value=0.05
+        ), patch.object(
+            alexa, "ALEXA_MIN_POST_TTS_DELAY", 0.05
+        ), patch.object(alexa, "async_call_later") as call_later:
+            first = asyncio.create_task(
+                _async_send_alexa(hass, entry, "cycle-one", "show")
+            )
+            await asyncio.wait_for(tts_events["cycle-one"].wait(), timeout=1)
+            waiter = asyncio.create_task(
+                _async_send_alexa(hass, entry, "cycle-two", "show")
+            )
+            await _wait_for_alexa_waiter(hass)
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(waiter, timeout=1)
+            assert hass.data[DOMAIN][DATA_ALEXA_WAITERS] == 0
+
+            await asyncio.wait_for(first, timeout=1)
+
+        restores = [
+            data["volume_level"]
+            for domain, service, data, _ in call_log
+            if domain == "media_player"
+            and service == "volume_set"
+            and data["volume_level"] == 0.4
+        ]
+        assert restores == [0.4]
+        assert hass.data[DOMAIN][DATA_ALEXA_PENDING_RESTORE] == {}
+        call_later.assert_called_once()
+
+    async def test_single_cycle_restores_and_schedules_rerestore(self):
+        call_log: list = []
+        hass = _make_hass(call_log)
+
+        with patch.object(
+            alexa, "_estimate_speech_seconds", return_value=0.05
+        ), patch.object(
+            alexa, "ALEXA_MIN_POST_TTS_DELAY", 0.05
+        ), patch.object(alexa, "async_call_later") as call_later:
+            await _async_send_alexa(hass, _make_entry(), "single", "show")
+
+        volumes = [
+            data["volume_level"]
+            for domain, service, data, _ in call_log
+            if domain == "media_player" and service == "volume_set"
+        ]
+        assert volumes == [0.7, 0.4]
+        call_later.assert_called_once()

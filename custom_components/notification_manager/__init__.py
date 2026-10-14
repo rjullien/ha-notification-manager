@@ -20,6 +20,8 @@ Per-entry state (resolver, watchdog, coordinator, bridge credentials in
 
 Shared across all entries (intentional):
 - ``DATA_ALEXA_LOCK`` — one volume save/restore lock for the house
+- ``DATA_ALEXA_WAITERS`` / ``DATA_ALEXA_PENDING_RESTORE`` — queued-cycle
+  accounting and deferred resting volumes, retained across entry reloads
 - ``DATA_ALEXA_EMISSIONS`` — one in-memory emission log
 - ``DATA_ALEXA_LAST_GOOD_VOLUMES`` — resting-volume cache per media_player
 - ``DATA_ALEXA_GENERATIONS`` / ``DATA_ALEXA_RERESTORE_UNSUBS`` — deferred
@@ -79,6 +81,8 @@ from .const import (
     ALEXA_VOLUME_SAVE_DELAY,
     CONF_BRIDGE_TOKEN,
     CONF_BRIDGE_URL,
+    DATA_ALEXA_PENDING_RESTORE,
+    DATA_ALEXA_WAITERS,
     CONF_VERIFY_SSL,
     DOMAIN,
     PLATFORMS,
@@ -148,6 +152,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # calls can't capture the TTS volume as the "original" one.
     # Shared across entries: one lock / emission log / volume cache for the house.
     domain_data.setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
+    domain_data.setdefault(DATA_ALEXA_WAITERS, 0)
+    domain_data.setdefault(DATA_ALEXA_PENDING_RESTORE, {})
     last_good: dict[str, float] = domain_data.setdefault(
         DATA_ALEXA_LAST_GOOD_VOLUMES, {}
     )
@@ -300,7 +306,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
     # Only remove services when the last entry is removed (internal keys
-    # such as the Alexa lock or cached sessions start with "_").
+    # such as Alexa queue state or cached sessions start with "_").
     remaining_entries = [k for k in hass.data.get(DOMAIN, {}) if not k.startswith("_")]
     if not remaining_entries:
         hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
@@ -347,6 +353,8 @@ __all__ = [
     "DATA_ALEXA_LOCK",
     "DATA_ALEXA_RERESTORE_UNSUBS",
     "DATA_ALEXA_STORE",
+    "DATA_ALEXA_WAITERS",
+    "DATA_ALEXA_PENDING_RESTORE",
     "DATA_ALEXA_RESOLVER",
     "DEFAULT_EMISSION_QUERY_SECONDS",
     "MAX_EMISSION_QUERY_SECONDS",
