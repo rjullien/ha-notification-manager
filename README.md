@@ -162,7 +162,7 @@ The sensor is created only when a bridge URL is configured and polls every **5 m
 1. **Read** current volume from each target entity, cross-checked against a per-entity last-known-good cache
 2. **Set** all targets to TTS volume (default `0.7`) — awaited *before* TTS so speech never starts at the old level
 3. **Send** TTS via `notify.alexa_media`
-4. **Wait** configurable delay (default `8s`)
+4. **Wait** the maximum of the configured delay (default `8s`), a `2s` safety floor, and the estimated speech duration (~12 characters/s + 2 s; capped at 90 s)
 5. **Restore** each player to its resting volume (retry once after 1s on failure)
 
 Restoration is guaranteed on cancellation (including HA shutdown) and errors. A 2-second minimum post-TTS delay prevents restoring before speech has finished. Twenty seconds after restore, the integration checks once for a delayed Alexa Media volume update and corrects it only if the player is still at the TTS volume. This deferred check is skipped when the cycle is cancelled (HA shutdown) or the entry is unloading.

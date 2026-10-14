@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import sys
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,10 +14,12 @@ from homeassistant.config_entries import ConfigEntryState  # noqa: E402
 
 with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}):
     from notification_manager.alexa import (
+        DATA_ALEXA_EMISSIONS,
         DATA_ALEXA_LAST_GOOD_VOLUMES,
         DATA_ALEXA_GENERATIONS,
         DATA_ALEXA_LOCK,
         DATA_ALEXA_RERESTORE_UNSUBS,
+        _estimate_speech_seconds,
         _async_rerestore,
         _async_restore_volumes,
         _async_send_alexa,
@@ -33,6 +36,7 @@ with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}
         DOMAIN,
     )
     import notification_manager.alexa as alexa
+    from notification_manager.alexa_emissions import AlexaEmissionLog
 
 
 PLAYER = "media_player.echo_show_bedroom"
@@ -202,11 +206,57 @@ class TestAlexaVolumeCycle:
 
         assert log == []
 
-    async def test_zero_delay_uses_two_second_floor(self):
-        """A saved zero delay cannot restore before speech has time to finish."""
+    def test_speech_estimate_includes_offset_for_short_text(self):
+        assert _estimate_speech_seconds("Hi") == pytest.approx(2.0 + 2 / 12)
+
+    def test_speech_estimate_265_characters_is_about_24_seconds(self):
+        assert _estimate_speech_seconds("a" * 265) == pytest.approx(2.0 + 265 / 12)
+
+    def test_speech_estimate_ignores_ssml_tags(self):
+        assert _estimate_speech_seconds(
+            "<speak>hello <break time='2s'/>world</speak>"
+        ) == pytest.approx(2.0 + len("hello world") / 12)
+
+    def test_speech_estimate_is_capped_at_90_seconds(self):
+        assert _estimate_speech_seconds("a" * 2000) == 90
+
+    async def test_short_speech_wait_uses_configured_delay(self):
         hass = _make_hass([])
         with patch.object(alexa.asyncio, "sleep", new=AsyncMock()) as sleep:
-            await _async_send_alexa(hass, _make_entry(delay=0), "Bonjour", "show")
+            await _async_send_alexa(
+                hass, _make_entry(delay=8), "Hi", "show"
+            )
+
+        sleep.assert_awaited_once_with(8)
+
+    async def test_long_speech_wait_uses_duration_estimate(self):
+        hass = _make_hass([])
+        message = "a" * 265
+        expected = _estimate_speech_seconds(message)
+        with patch.object(alexa.asyncio, "sleep", new=AsyncMock()) as sleep:
+            await _async_send_alexa(hass, _make_entry(delay=0), message, "show")
+
+        sleep.assert_awaited_once_with(expected)
+
+    async def test_emission_speech_estimate_matches_post_tts_wait(self):
+        hass = _make_hass([])
+        message = "a" * 265
+        expected = _estimate_speech_seconds(message)
+        emission_log = AlexaEmissionLog()
+        hass.data[DOMAIN] = {DATA_ALEXA_EMISSIONS: emission_log}
+
+        with patch.object(alexa.asyncio, "sleep", new=AsyncMock()) as sleep:
+            await _async_send_alexa(hass, _make_entry(delay=0), message, "show")
+
+        sleep.assert_awaited_once_with(expected)
+        emission = emission_log.recent(timedelta(minutes=1))[0]
+        assert emission.ends_at - emission.started_at == timedelta(seconds=expected)
+
+    async def test_zero_delay_uses_two_second_floor(self):
+        """A saved zero delay cannot restore before the speech estimate floor."""
+        hass = _make_hass([])
+        with patch.object(alexa.asyncio, "sleep", new=AsyncMock()) as sleep:
+            await _async_send_alexa(hass, _make_entry(delay=0), "", "show")
 
         sleep.assert_awaited_once_with(ALEXA_MIN_POST_TTS_DELAY)
 

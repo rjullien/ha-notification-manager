@@ -54,6 +54,11 @@ ALEXA_POST_TTS_DELAY = 8
 # Floor so a zero delay cannot cut speech off before volume restore.
 ALEXA_MIN_POST_TTS_DELAY = 2
 
+# Estimate spoken duration from text length.
+ALEXA_SPEECH_CHARS_PER_SECOND = 12
+ALEXA_SPEECH_OFFSET_SECONDS = 2.0
+ALEXA_SPEECH_MAX_SECONDS = 90
+
 # Re-check Alexa volume after delayed media-player state updates (seconds).
 ALEXA_RERESTORE_DELAY = 20
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import timedelta
 from functools import partial
 from typing import Sequence
@@ -22,6 +23,9 @@ from .const import (
     ALEXA_MIN_POST_TTS_DELAY,
     ALEXA_RERESTORE_DELAY,
     ALEXA_RESTORE_RETRY_DELAY,
+    ALEXA_SPEECH_CHARS_PER_SECOND,
+    ALEXA_SPEECH_MAX_SECONDS,
+    ALEXA_SPEECH_OFFSET_SECONDS,
     DOMAIN,
 )
 from .runtime import _get_runtime_config
@@ -306,6 +310,7 @@ def _record_alexa_emission(
     cfg: dict,
     message: str,
     context_id: str | None,
+    speech_estimate_seconds: float | None = None,
 ) -> None:
     """Record a TTS emission that was actually issued to real speakers.
 
@@ -322,10 +327,26 @@ def _record_alexa_emission(
             local_players=cfg.get("alexa_local_players") or (),
             context_id=context_id,
             message=message,
-            speech_estimate=timedelta(seconds=float(cfg.get("alexa_post_tts_delay") or 0)),
+            speech_estimate=timedelta(
+                seconds=float(
+                    speech_estimate_seconds
+                    if speech_estimate_seconds is not None
+                    else cfg.get("alexa_post_tts_delay") or 0
+                )
+            ),
         )
     except Exception as exc:  # noqa: BLE001
         _LOGGER.warning("Failed to record Alexa emission: %s", exc)
+
+
+def _estimate_speech_seconds(message: str) -> float:
+    """Estimate TTS duration from visible text, ignoring SSML/XML tags."""
+    text = re.sub(r"<[^>]+>", " ", message)
+    text = " ".join(text.split())
+    return min(
+        ALEXA_SPEECH_MAX_SECONDS,
+        ALEXA_SPEECH_OFFSET_SECONDS + len(text) / ALEXA_SPEECH_CHARS_PER_SECOND,
+    )
 
 
 async def _async_send_alexa(
@@ -371,6 +392,11 @@ async def _async_send_alexa(
     targets = available_targets
 
     _LOGGER.debug("Alexa targets: %s", targets)
+    post_tts_wait = max(
+        cfg["alexa_post_tts_delay"],
+        ALEXA_MIN_POST_TTS_DELAY,
+        _estimate_speech_seconds(message),
+    )
 
     domain_data = hass.data.setdefault(DOMAIN, {})
     lock: asyncio.Lock = domain_data.setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
@@ -443,15 +469,19 @@ async def _async_send_alexa(
                 # Recorded only here: `targets` is resolved and availability
                 # filtered, so this is proof that speakers really spoke.
                 _record_alexa_emission(
-                    hass, targets, "tts_fr", cfg, message, context_id
+                    hass,
+                    targets,
+                    "tts_fr",
+                    cfg,
+                    message,
+                    context_id,
+                    speech_estimate_seconds=post_tts_wait,
                 )
             except Exception as exc:  # noqa: BLE001
                 _LOGGER.error("Failed to send Alexa TTS: %s", exc)
 
             # 4. Wait for speech to finish
-            await asyncio.sleep(
-                max(cfg["alexa_post_tts_delay"], ALEXA_MIN_POST_TTS_DELAY)
-            )
+            await asyncio.sleep(post_tts_wait)
         except asyncio.CancelledError:
             _LOGGER.warning(
                 "Alexa TTS cycle cancelled — restoring volumes for %s", targets
