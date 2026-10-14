@@ -19,6 +19,7 @@ from .const import (
     ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
     ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
     BRIDGE_ALERT_CHAT_IDS as _CONST_BRIDGE_ALERT_CHAT_IDS,
+    BRIDGE_URL_PLACEHOLDER,
     CONF_BRIDGE_URL,
     CONF_VERIFY_SSL,
     DEFAULT_BRIDGE_URL,
@@ -34,12 +35,12 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _entry_bridge_url(entry: ConfigEntry) -> str:
-    """Return the configured bridge URL, or an empty string if unconfigured."""
+    """Return the bridge URL (entry, else private default), or "" if unconfigured."""
     bridge_url = entry.data.get(CONF_BRIDGE_URL, "")
     if not isinstance(bridge_url, str):
-        return ""
-    bridge_url = bridge_url.strip()
-    if not bridge_url or bridge_url == DEFAULT_BRIDGE_URL:
+        bridge_url = ""
+    bridge_url = bridge_url.strip() or DEFAULT_BRIDGE_URL.strip()
+    if bridge_url == BRIDGE_URL_PLACEHOLDER:
         return ""
     return bridge_url
 
