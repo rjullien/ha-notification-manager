@@ -19,7 +19,9 @@ from .const import (
     ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
     ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
     BRIDGE_ALERT_CHAT_IDS as _CONST_BRIDGE_ALERT_CHAT_IDS,
+    CONF_BRIDGE_URL,
     CONF_VERIFY_SSL,
+    DEFAULT_BRIDGE_URL,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     PHONE_DEFAULT_TARGETS as _CONST_PHONE_DEFAULT_TARGETS,
@@ -29,6 +31,17 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _entry_bridge_url(entry: ConfigEntry) -> str:
+    """Return the configured bridge URL, or an empty string if unconfigured."""
+    bridge_url = entry.data.get(CONF_BRIDGE_URL, "")
+    if not isinstance(bridge_url, str):
+        return ""
+    bridge_url = bridge_url.strip()
+    if not bridge_url or bridge_url == DEFAULT_BRIDGE_URL:
+        return ""
+    return bridge_url
 
 
 async def _run_logged(coro: Awaitable, label: str) -> None:

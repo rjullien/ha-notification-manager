@@ -54,7 +54,13 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 3. Enter your whatsmeow-bridge URL and bearer token
 4. **Verify TLS certificate** is enabled by default — disable it only if your bridge uses a self-signed certificate
 
-> **No WhatsApp?** You can enter any placeholder URL — the component works fine for phone/Alexa even if the bridge is down.
+> **No WhatsApp?** Leave the bridge URL empty. The default placeholder URL is also treated as unconfigured.
+
+## Empreinte minimale / Minimal footprint
+
+- With no effective Alexa players configured, no Alexa volume store or boot recovery is initialized, and Alexa notification cycles are not scheduled.
+- An empty bridge URL disables the bridge-status sensor and its polling; WhatsApp requests are skipped with a warning, and any stale bridge sensor is removed from the entity registry. The default placeholder URL (`https://bridge.your-tailnet.ts.net`) is treated as empty.
+- With no watchdog entities configured, no watchdog object or polling timers are created.
 
 ---
 
@@ -145,9 +151,9 @@ data:
 |-------|---------|
 | `connected` | Bridge is up and responding |
 | `disconnected` | Bridge unreachable or returned error |
-| `unknown` | Bridge URL not configured or not yet polled |
+| `unknown` | Bridge not yet polled |
 
-Polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
+The sensor is created only when a bridge URL is configured and polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
 
 ---
 

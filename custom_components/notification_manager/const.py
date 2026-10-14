@@ -146,6 +146,7 @@ SENSOR_POLL_INTERVAL_MINUTES = 5
 SENSOR_STATE_CONNECTED = "connected"
 SENSOR_STATE_DISCONNECTED = "disconnected"
 SENSOR_STATE_UNKNOWN = "unknown"
+SENSOR_BRIDGE_STATUS_KEY = "whatsapp_status"
 
 # ── Service ───────────────────────────────────────────────────────────────────
 

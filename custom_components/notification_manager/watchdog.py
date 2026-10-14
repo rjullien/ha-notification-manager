@@ -208,8 +208,12 @@ class EntityWatchdog:
                 )
 
 
-def async_setup_watchdog(hass: HomeAssistant, entry: ConfigEntry) -> EntityWatchdog:
+def async_setup_watchdog(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> EntityWatchdog | None:
     """Create and start the entity watchdog."""
+    if not WATCHDOG_ENTITIES and not WATCHDOG_CRITICAL_ENTITIES:
+        return None
     watchdog = EntityWatchdog(hass, entry)
     watchdog.start()
     return watchdog

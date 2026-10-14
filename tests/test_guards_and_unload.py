@@ -255,7 +255,7 @@ class TestMultiEntrySetup:
         assert nm.DATA_ALEXA_EMISSIONS in hass.data[DOMAIN]
         assert nm.DATA_ALEXA_GENERATIONS in hass.data[DOMAIN]
         assert nm.DATA_ALEXA_RERESTORE_UNSUBS in hass.data[DOMAIN]
-        assert nm.DATA_ALEXA_STORE in hass.data[DOMAIN]
+        assert nm.DATA_ALEXA_STORE not in hass.data[DOMAIN]
 
         assert registered == {
             (DOMAIN, "notify"),

@@ -23,8 +23,10 @@ ha_mock.config_entries.ConfigEntryState = _ConfigEntryState
 ha_mock.const = MagicMock()
 ha_mock.const.EVENT_HOMEASSISTANT_STARTED = "homeassistant_started"
 ha_mock.exceptions.Unauthorized = type("Unauthorized", (Exception,), {})
+ha_mock.exceptions.HomeAssistantError = type("HomeAssistantError", (Exception,), {})
 ha_mock.helpers.config_validation = MagicMock()
 ha_mock.helpers.config_validation.string = str
+ha_mock.helpers.entity_registry = MagicMock()
 ha_mock.helpers.storage = MagicMock()
 ha_mock.helpers.aiohttp_client.async_get_clientsession = MagicMock()
 ha_mock.helpers.update_coordinator.DataUpdateCoordinator = MagicMock
@@ -73,6 +75,7 @@ modules_to_mock = {
     "homeassistant.exceptions": ha_mock.exceptions,
     "homeassistant.loader": ha_mock.loader,
     "homeassistant.helpers": ha_mock.helpers,
+    "homeassistant.helpers.entity_registry": ha_mock.helpers.entity_registry,
     "homeassistant.helpers.storage": ha_mock.helpers.storage,
     "homeassistant.helpers.config_validation": ha_mock.helpers.config_validation,
     "homeassistant.helpers.aiohttp_client": ha_mock.helpers.aiohttp_client,

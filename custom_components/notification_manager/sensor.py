@@ -13,6 +13,7 @@ from homeassistant.loader import async_get_integration
 
 from .const import (
     DOMAIN,
+    SENSOR_BRIDGE_STATUS_KEY,
     SENSOR_STATE_UNKNOWN,
 )
 from .coordinator import NotificationManagerCoordinator
@@ -20,7 +21,7 @@ from .coordinator import NotificationManagerCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 SENSOR_DESCRIPTION = SensorEntityDescription(
-    key="whatsapp_status",
+    key=SENSOR_BRIDGE_STATUS_KEY,
     name="WhatsApp Bridge Status",
     icon="mdi:whatsapp",
 )
@@ -32,8 +33,7 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the WhatsApp status sensor."""
-    entry_data = hass.data[DOMAIN][entry.entry_id]
-    coordinator = NotificationManagerCoordinator(hass, entry_data)
+    coordinator = NotificationManagerCoordinator(hass, entry)
 
     # Store coordinator so __init__ can update it when options change
     hass.data[DOMAIN][entry.entry_id]["coordinator"] = coordinator

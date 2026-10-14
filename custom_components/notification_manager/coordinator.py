@@ -6,24 +6,22 @@ from datetime import timedelta
 
 import aiohttp
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .bridge_http import async_get_bridge_session
 from .const import (
     BRIDGE_HEALTH_ENDPOINT,
     BRIDGE_TIMEOUT,
     CONF_BRIDGE_TOKEN,
-    CONF_BRIDGE_URL,
-    CONF_VERIFY_SSL,
-    DEFAULT_BRIDGE_URL,
-    DEFAULT_VERIFY_SSL,
     DOMAIN,
     SENSOR_POLL_INTERVAL_MINUTES,
     SENSOR_STATE_CONNECTED,
     SENSOR_STATE_DISCONNECTED,
     SENSOR_STATE_UNKNOWN,
 )
+from .bridge_http import async_get_bridge_session
+from .runtime import _entry_bridge_url, _entry_verify_ssl
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -31,11 +29,11 @@ _LOGGER = logging.getLogger(__name__)
 class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
     """Polls the WhatsApp bridge /health endpoint every 5 minutes."""
 
-    def __init__(self, hass: HomeAssistant, entry_data: dict) -> None:
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialise the coordinator."""
-        self._bridge_url: str = entry_data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
-        self._bridge_token: str = entry_data.get(CONF_BRIDGE_TOKEN, "")
-        self._verify_ssl: bool = entry_data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+        self._bridge_url: str = _entry_bridge_url(entry)
+        self._bridge_token: str = entry.data.get(CONF_BRIDGE_TOKEN, "")
+        self._verify_ssl: bool = _entry_verify_ssl(entry)
 
         super().__init__(
             hass,
