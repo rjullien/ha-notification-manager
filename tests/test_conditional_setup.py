@@ -17,7 +17,7 @@ with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}
     import notification_manager.runtime as runtime
     import notification_manager.watchdog as watchdog
     from notification_manager.const import (
-        DEFAULT_BRIDGE_URL,
+        BRIDGE_URL_PLACEHOLDER as DEFAULT_BRIDGE_URL,
         DOMAIN,
         SENSOR_BRIDGE_STATUS_KEY,
     )
@@ -145,6 +145,41 @@ class TestBridgeConfiguration:
         entry = _make_entry(bridge_url=bridge_url)
 
         assert runtime._entry_bridge_url(entry) == expected
+
+    @pytest.mark.parametrize(
+        ("bridge_url", "expected"),
+        [
+            ("https://gowa.example", "https://gowa.example"),
+            ("", "https://gowa.example"),
+            ("  ", "https://gowa.example"),
+            (DEFAULT_BRIDGE_URL, ""),
+            ("https://other.example", "https://other.example"),
+        ],
+    )
+    def test_private_default_bridge_url_is_a_real_bridge(self, bridge_url, expected):
+        entry = _make_entry(bridge_url=bridge_url)
+
+        with patch.object(runtime, "DEFAULT_BRIDGE_URL", "https://gowa.example"):
+            assert runtime._entry_bridge_url(entry) == expected
+
+    async def test_bridge_equal_to_private_default_forwards_sensor_platform(self):
+        hass, _registered = _make_hass()
+        entry = _make_entry(bridge_url="https://gowa.example")
+        registry = MagicMock()
+
+        with (
+            patch.object(runtime, "DEFAULT_BRIDGE_URL", "https://gowa.example"),
+            patch.object(runtime, "_CONST_ALEXA_PLAYERS", []),
+            patch.object(runtime, "_CONST_ALEXA_LOCAL_PLAYERS", []),
+            patch.object(nm.er, "async_get", return_value=registry),
+            patch.object(nm, "async_close_bridge_sessions", new=AsyncMock()),
+        ):
+            assert await nm.async_setup_entry(hass, entry) is True
+            assert hass.data[DOMAIN][entry.entry_id]["bridge_url"] == "https://gowa.example"
+            hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(
+                entry, ["sensor"]
+            )
+            registry.async_remove.assert_not_called()
 
 
 class TestAlexaConditionalSetup:

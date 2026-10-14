@@ -8,7 +8,10 @@ CONF_BRIDGE_TOKEN = "bridge_token"
 CONF_VERIFY_SSL = "verify_ssl"
 
 # Default values
-DEFAULT_BRIDGE_URL = "https://bridge.your-tailnet.ts.net"
+# Example URL shipped with the component: never a real bridge. Kept separate
+# from DEFAULT_BRIDGE_URL, which the private file may override with a real URL.
+BRIDGE_URL_PLACEHOLDER = "https://bridge.your-tailnet.ts.net"
+DEFAULT_BRIDGE_URL = BRIDGE_URL_PLACEHOLDER
 DEFAULT_BRIDGE_TOKEN = ""  # GoWA: no auth needed (Tailscale-secured)
 # Secure by default — disable explicitly in the config flow for
 # self-signed certificates on the bridge.
