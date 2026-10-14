@@ -1,15 +1,15 @@
-# Analyse des bugs Alexa restants
+# Analyse des bugs Alexa — restore volumes
 
 Date : 14 octobre 2026
 Branche : fix/alexa-bugs
 
-## Bug 1 : `asyncio.gather` sans `return_exceptions=True` dans `_async_restore_volumes`
+## Bug 1 — `asyncio.gather` sans `return_exceptions=True` dans `_async_restore_volumes`
 
 ### Problème
 
-Dans `alexa.py`, la fonction `_async_restore_volumes` fait un `asyncio.gather` sur les `restore_one` sans `return_exceptions=True`. Chaque `restore_one` fait un `volume_set` bloquant, et s'il échoue il attend `ALEXA_RESTORE_RETRY_DELAY` puis retente.
+Dans `alexa.py`, la fonction `_async_restore_volumes` fait un `asyncio.gather` sur les tâches `restore_one` sans passer `return_exceptions=True`. Chaque `restore_one` fait un `volume_set` bloquant, et en cas d'échec il attend `ALEXA_RESTORE_RETRY_DELAY` puis retente.
 
-Si une tâche lève une exception autre qu'une `CancelledError` — par exemple une erreur non catchée du service `volume_set` — le `gather` propage tout de suite et les autres enceintes ne sont jamais restaurées.
+Si une tâche lève une exception autre qu'une `CancelledError` — par exemple une erreur non catchée du service `volume_set` — le `gather` propage l'exception immédiatement et les autres enceintes ne sont jamais restaurées.
 
 ### Fix proposé
 
@@ -17,7 +17,7 @@ Passer `return_exceptions=True` au `gather`, puis itérer sur les résultats pou
 
 ```python
 results = await asyncio.gather(
-    *(restore_one(target) for target in targets),
+    *(restore_one(target, generation) for target in targets),
     return_exceptions=True,
 )
 for result in results:
@@ -27,7 +27,7 @@ for result in results:
 
 Ça garantit que toutes les enceintes sont tentées même si l'une plante.
 
-## Bug 2 : Re-restore jobs planifiés après le `finally` dans `_async_send_alexa`
+## Bug 2 — Re-restore jobs planifiés après le `finally` dans `_async_send_alexa`
 
 ### Problème
 
@@ -35,16 +35,14 @@ Dans `_async_send_alexa`, le bloc `try` envoie le TTS et attend le `post_tts_del
 
 Sauf que si une `CancelledError` est levée dans le `try` — par exemple un unload de Home Assistant — le handler log, relance, et le `finally` s'exécute, mais le code après le `finally` ne s'exécute jamais. Résultat : les jobs de re-restore ne sont pas créés, et une enceinte qui reste bloquée au volume TTS après un arrêt de HA n'est corrigée que par le boot recovery soixante secondes plus tard.
 
-### Fix proposé
-
-Deux options :
+### Options
 
 1. Déplacer le scheduling des re-restore à l'intérieur du `finally`, juste après la restauration des volumes.
 2. Accepter le boot recovery comme seule filet de sécurité.
 
-Le choix dépend de si tu préfères un re-restore immédiat ou une logique plus simple.
+Le choix dépend de si on préfère un re-restore immédiat ou une logique plus simple.
 
 ## Notes
 
-- Le boot recovery couvre le cas d'un arrêt de HA en pleine annonce à soixante secondes, donc le bug 2 est acceptable comme fallback.
-- Le bug 1 est le plus sérieux : une erreur inattendue sur une seule enceinte fait échouer toutes les restaurations du cycle.
+- Le boot recovery à soixante secondes couvre déjà le cas du bug 2, donc c'est un fallback acceptable.
+- Le bug 1 est le plus sérieux des deux : une exception inattendue sur une seule enceinte peut laisser toutes les autres au volume TTS.
