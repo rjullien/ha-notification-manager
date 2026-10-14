@@ -20,6 +20,8 @@ Per-entry state (resolver, watchdog, coordinator, bridge credentials in
 
 Shared across all entries (intentional):
 - ``DATA_ALEXA_LOCK`` — one volume save/restore lock for the house
+- ``DATA_ALEXA_WAITERS`` / ``DATA_ALEXA_PENDING_RESTORE`` — queued-cycle
+  accounting and deferred resting volumes, retained across entry reloads
 - ``DATA_ALEXA_EMISSIONS`` — one in-memory emission log
 - ``DATA_ALEXA_LAST_GOOD_VOLUMES`` — resting-volume cache per media_player
 - ``DATA_ALEXA_GENERATIONS`` / ``DATA_ALEXA_RERESTORE_UNSUBS`` — deferred
@@ -39,6 +41,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
 
@@ -78,12 +81,15 @@ from .const import (
     ALEXA_VOLUME_SAVE_DELAY,
     CONF_BRIDGE_TOKEN,
     CONF_BRIDGE_URL,
+    DATA_ALEXA_PENDING_RESTORE,
+    DATA_ALEXA_WAITERS,
     CONF_VERIFY_SSL,
     DOMAIN,
     PLATFORMS,
     SERVICE_NOTIFY,
     SERVICE_RECENT_ALEXA_EMISSIONS,
     SERVICE_RESTORE_ALEXA_VOLUMES,
+    SENSOR_BRIDGE_STATUS_KEY,
 )
 from .messaging import (
     _async_call_telegram,
@@ -97,6 +103,7 @@ from .messaging import (
 )
 from .notify import _async_handle_notify
 from .runtime import (
+    _entry_bridge_url,
     _entry_verify_ssl,
     _get_primary_entry,
     _get_runtime_config,
@@ -130,10 +137,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     domain_data = hass.data[DOMAIN]
     first_setup = DATA_ALEXA_STORE not in domain_data
+    bridge_url = _entry_bridge_url(entry)
+    platforms = PLATFORMS if bridge_url else []
     domain_data[entry.entry_id] = {
-        CONF_BRIDGE_URL: entry.data.get(CONF_BRIDGE_URL, ""),
+        CONF_BRIDGE_URL: bridge_url,
         CONF_BRIDGE_TOKEN: entry.data.get(CONF_BRIDGE_TOKEN, ""),
         CONF_VERIFY_SSL: _entry_verify_ssl(entry),
+        "platforms": platforms,
         # Per-entry resolver — do not store a single domain-level resolver that
         # the last-loaded entry would clobber.
         DATA_ALEXA_RESOLVER: _make_alexa_resolver(hass, entry),
@@ -142,6 +152,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # calls can't capture the TTS volume as the "original" one.
     # Shared across entries: one lock / emission log / volume cache for the house.
     domain_data.setdefault(DATA_ALEXA_LOCK, asyncio.Lock())
+    domain_data.setdefault(DATA_ALEXA_WAITERS, 0)
+    domain_data.setdefault(DATA_ALEXA_PENDING_RESTORE, {})
     last_good: dict[str, float] = domain_data.setdefault(
         DATA_ALEXA_LAST_GOOD_VOLUMES, {}
     )
@@ -157,7 +169,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ),
     )
 
-    if first_setup:
+    alexa_enabled = bool(_get_runtime_config(entry)["alexa_players"])
+    if first_setup and alexa_enabled:
         store = Store(hass, 1, "notification_manager.alexa_volumes")
         domain_data[DATA_ALEXA_STORE] = store
         try:
@@ -201,9 +214,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 schedule_boot_recovery,
             )
             entry.async_on_unload(unsubscribe)
-
-    # Forward to sensor platform
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    if platforms:
+        await hass.config_entries.async_forward_entry_setups(entry, platforms)
+    else:
+        registry = er.async_get(hass)
+        for sensor_key in (SENSOR_BRIDGE_STATUS_KEY,):
+            unique_id = f"{entry.entry_id}_{sensor_key}"
+            entity_id = registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+            if entity_id:
+                registry.async_remove(entity_id)
+                _LOGGER.info("Removed stale WhatsApp bridge status sensor %s", entity_id)
 
     # Reload the entry whenever its config changes (options flow or reconfigure
     # flow). Without this, the coordinator keeps polling the old bridge URL/token
@@ -230,6 +250,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def handle_restore_alexa_volumes(call: ServiceCall) -> None:
             """Restore each available Alexa to its last-known resting volume."""
             await _async_require_admin(hass, call)
+            domain_data = hass.data.get(DOMAIN, {})
+            if domain_data.get(DATA_ALEXA_STORE) is None:
+                return
+
+            alexa_configured = False
+            for entry_id in domain_data:
+                if entry_id.startswith("_"):
+                    continue
+                active = hass.config_entries.async_get_entry(entry_id)
+                if active and _get_runtime_config(active)["alexa_players"]:
+                    alexa_configured = True
+                    break
+            if not alexa_configured:
+                return
             await _async_restore_saved_volumes(hass)
 
         hass.services.async_register(
@@ -262,12 +296,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if coordinator:
         await coordinator.async_shutdown()
 
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    platforms = entry_data.get("platforms", PLATFORMS)
+    unload_ok = (
+        await hass.config_entries.async_unload_platforms(entry, platforms)
+        if platforms
+        else True
+    )
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
     # Only remove services when the last entry is removed (internal keys
-    # such as the Alexa lock or cached sessions start with "_").
+    # such as Alexa queue state or cached sessions start with "_").
     remaining_entries = [k for k in hass.data.get(DOMAIN, {}) if not k.startswith("_")]
     if not remaining_entries:
         hass.services.async_remove(DOMAIN, SERVICE_NOTIFY)
@@ -314,6 +353,8 @@ __all__ = [
     "DATA_ALEXA_LOCK",
     "DATA_ALEXA_RERESTORE_UNSUBS",
     "DATA_ALEXA_STORE",
+    "DATA_ALEXA_WAITERS",
+    "DATA_ALEXA_PENDING_RESTORE",
     "DATA_ALEXA_RESOLVER",
     "DEFAULT_EMISSION_QUERY_SECONDS",
     "MAX_EMISSION_QUERY_SECONDS",

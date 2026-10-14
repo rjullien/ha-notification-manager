@@ -42,6 +42,14 @@ def _make_hass(call_log: list):
     return hass
 
 
+@pytest.fixture
+def entity_registry():
+    registry = MagicMock()
+    registry.async_get.return_value = None
+    with patch.object(wd.er, "async_get", return_value=registry):
+        yield registry
+
+
 # A real message from controle_roquefort_manager's "On part !" checklist: nine
 # underscores, i.e. an odd number, which is what made Telegram reject it.
 CHECKLIST_MESSAGE = (
@@ -182,7 +190,7 @@ class TestWatchdogAlertFormatting:
         watchdog._async_send_alert = AsyncMock()
         return watchdog
 
-    async def test_alert_uses_html_and_escapes_friendly_name(self):
+    async def test_alert_uses_html_and_escapes_friendly_name(self, entity_registry):
         entity_id = "switch.arrosage_vanne_1"
         watchdog = self._watchdog_with_unavailable(entity_id, "Vanne <Jardin> & Potager")
 
@@ -197,7 +205,7 @@ class TestWatchdogAlertFormatting:
         assert "<b>" in message and "*" not in message
 
     @pytest.mark.asyncio
-    async def test_missing_state_is_labeled_introuvable(self):
+    async def test_missing_state_is_labeled_introuvable(self, entity_registry):
         """A removed entity is reported as introuvable, not unavailable."""
         entity_id = "switch.renamed_entity"
         hass = MagicMock()
@@ -215,13 +223,16 @@ class TestWatchdogAlertFormatting:
             [entity_id], timedelta(minutes=5), "critical"
         )
 
+        entity_registry.async_get.assert_called_once_with(entity_id)
         message = watchdog._async_send_alert.await_args.args[0]
         assert "introuvable depuis" in message
         assert "unavailable depuis" not in message
 
     @pytest.mark.parametrize("state_value", ["unknown", "unavailable"])
     @pytest.mark.asyncio
-    async def test_unknown_and_unavailable_keep_existing_alert_label(self, state_value):
+    async def test_unknown_and_unavailable_keep_existing_alert_label(
+        self, state_value, entity_registry
+    ):
         """Existing unknown/unavailable states retain their alert wording."""
         entity_id = "switch.arrosage_vanne_1"
         watchdog = self._watchdog_with_unavailable(entity_id, "Vanne jardin")
@@ -234,6 +245,96 @@ class TestWatchdogAlertFormatting:
         message = watchdog._async_send_alert.await_args.args[0]
         assert "unavailable depuis" in message
         assert "introuvable" not in message
+
+    async def test_disabled_missing_entity_is_skipped_and_tracking_is_cleared(
+        self, entity_registry
+    ):
+        entity_id = "switch.irrigation_disabled"
+        watchdog = self._watchdog_with_unavailable(entity_id, "Vanne")
+        watchdog._hass.states.get.return_value = None
+        registry_entry = MagicMock(disabled_by="user", config_entry_id="integration")
+        entity_registry.async_get.return_value = registry_entry
+        watchdog._last_alerted[entity_id] = datetime.now(timezone.utc)
+
+        await watchdog._async_check_entities(
+            [entity_id], timedelta(minutes=5), "standard"
+        )
+
+        watchdog._async_send_alert.assert_not_awaited()
+        assert entity_id not in watchdog._unavailable_since
+        assert entity_id not in watchdog._last_alerted
+        watchdog._hass.config_entries.async_get_entry.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("tier", "entities_setting"),
+        [
+            ("standard", "WATCHDOG_ENTITIES"),
+            ("critical", "WATCHDOG_CRITICAL_ENTITIES"),
+        ],
+    )
+    async def test_disabled_config_entry_is_skipped_for_both_tiers(
+        self, tier, entities_setting, entity_registry
+    ):
+        entity_id = f"switch.irrigation_{tier}"
+        watchdog = self._watchdog_with_unavailable(entity_id, "Vanne")
+        registry_entry = MagicMock(disabled_by=None, config_entry_id="integration")
+        entity_registry.async_get.return_value = registry_entry
+        watchdog._hass.config_entries.async_get_entry.return_value = MagicMock(
+            disabled_by="user"
+        )
+        watchdog._last_alerted[entity_id] = datetime.now(timezone.utc)
+
+        with patch.object(wd, entities_setting, [entity_id]):
+            await getattr(watchdog, f"_async_check_{tier}")()
+
+        watchdog._async_send_alert.assert_not_awaited()
+        watchdog._hass.config_entries.async_get_entry.assert_called_once_with(
+            "integration"
+        )
+        assert entity_id not in watchdog._unavailable_since
+        assert entity_id not in watchdog._last_alerted
+
+    async def test_enabled_unknown_entity_still_alerts(self, entity_registry):
+        entity_id = "switch.irrigation_enabled"
+        watchdog = self._watchdog_with_unavailable(entity_id, "Vanne")
+        watchdog._hass.states.get.return_value.state = "unknown"
+        entity_registry.async_get.return_value = MagicMock(
+            disabled_by=None, config_entry_id="integration"
+        )
+        watchdog._hass.config_entries.async_get_entry.return_value = MagicMock(
+            disabled_by=None
+        )
+
+        await watchdog._async_check_entities(
+            [entity_id], timedelta(minutes=5), "standard"
+        )
+
+        watchdog._async_send_alert.assert_awaited_once()
+        message = watchdog._async_send_alert.await_args.args[0]
+        assert "unavailable depuis" in message
+
+    async def test_healthy_entity_skips_registry_lookup(self):
+        entity_id = "switch.irrigation_healthy"
+        hass = MagicMock()
+        hass.states.get.return_value = MagicMock(
+            state="on", attributes={"friendly_name": "Vanne"}
+        )
+        watchdog = wd.EntityWatchdog(hass, MagicMock())
+        watchdog._unavailable_since[entity_id] = (
+            datetime.now(timezone.utc) - timedelta(hours=2)
+        )
+        watchdog._last_alerted[entity_id] = datetime.now(timezone.utc)
+        watchdog._async_send_alert = AsyncMock()
+
+        with patch.object(wd.er, "async_get") as registry_lookup:
+            await watchdog._async_check_entities(
+                [entity_id], timedelta(minutes=5), "standard"
+            )
+
+        registry_lookup.assert_not_called()
+        watchdog._async_send_alert.assert_not_awaited()
+        assert entity_id not in watchdog._unavailable_since
+        assert entity_id not in watchdog._last_alerted
 
     async def test_alert_sent_with_html_parse_mode(self):
         hass = MagicMock()

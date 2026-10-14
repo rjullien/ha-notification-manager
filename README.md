@@ -54,7 +54,13 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 3. Enter your whatsmeow-bridge URL and bearer token
 4. **Verify TLS certificate** is enabled by default — disable it only if your bridge uses a self-signed certificate
 
-> **No WhatsApp?** You can enter any placeholder URL — the component works fine for phone/Alexa even if the bridge is down.
+> **No WhatsApp?** Leave the bridge URL empty. The default placeholder URL is also treated as unconfigured.
+
+## Empreinte minimale / Minimal footprint
+
+- With no effective Alexa players configured, no Alexa volume store or boot recovery is initialized, and Alexa notification cycles are not scheduled.
+- An empty bridge URL disables the bridge-status sensor and its polling; WhatsApp requests are skipped with a warning, and any stale bridge sensor is removed from the entity registry. The default placeholder URL (`https://bridge.your-tailnet.ts.net`) is treated as empty.
+- With no watchdog entities configured, no watchdog object or polling timers are created.
 
 ---
 
@@ -99,6 +105,8 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 - ⚠️ **No `"all"` keyword** — speakers span multiple locations, broadcasting everywhere is forbidden
 
 > Site-specific player lists and exclude maps live in the private Home Assistant config repo (not in this public component). This repo documents the mechanism only — see `const_private.example.py` for placeholder shape.
+
+An empty list saved in the UI falls back to `notification_manager_private.py`: to disable a channel, leave it undefined in the private file too.
 
 > The algorithm is inherited from the original mamagetts automation: substring matching gives flexibility without maintaining a separate name→entity mapping.
 
@@ -145,9 +153,9 @@ data:
 |-------|---------|
 | `connected` | Bridge is up and responding |
 | `disconnected` | Bridge unreachable or returned error |
-| `unknown` | Bridge URL not configured or not yet polled |
+| `unknown` | Bridge not yet polled |
 
-Polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
+The sensor is created only when a bridge URL is configured and polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
 
 ---
 
@@ -156,7 +164,7 @@ Polls every **5 minutes**. Use in automations to alert when WhatsApp goes down.
 1. **Read** current volume from each target entity, cross-checked against a per-entity last-known-good cache
 2. **Set** all targets to TTS volume (default `0.7`) — awaited *before* TTS so speech never starts at the old level
 3. **Send** TTS via `notify.alexa_media`
-4. **Wait** configurable delay (default `8s`)
+4. **Wait** the maximum of the configured delay (default `8s`), a `2s` safety floor, and the estimated speech duration (~12 characters/s + 2 s; capped at 90 s)
 5. **Restore** each player to its resting volume (retry once after 1s on failure)
 
 Restoration is guaranteed on cancellation (including HA shutdown) and errors. A 2-second minimum post-TTS delay prevents restoring before speech has finished. Twenty seconds after restore, the integration checks once for a delayed Alexa Media volume update and corrects it only if the player is still at the TTS volume. This deferred check is skipped when the cycle is cancelled (HA shutdown) or the entry is unloading.

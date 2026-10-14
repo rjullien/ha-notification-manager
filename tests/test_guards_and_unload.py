@@ -132,6 +132,7 @@ class TestUnloadEntry:
         coordinator.async_shutdown = AsyncMock()
         lock = asyncio.Lock()
         last_good = {"media_player.echo": 0.4}
+        pending_restore = {"media_player.echo": 0.4}
         store = MagicMock()
         store.async_save = AsyncMock()
         pending_unsub = MagicMock()
@@ -141,6 +142,8 @@ class TestUnloadEntry:
             nm.DATA_ALEXA_LAST_GOOD_VOLUMES: last_good,
             nm.DATA_ALEXA_EMISSIONS: AlexaEmissionLog(),  # idem
             nm.DATA_ALEXA_GENERATIONS: {"media_player.echo": 3},
+            nm.DATA_ALEXA_WAITERS: 1,
+            nm.DATA_ALEXA_PENDING_RESTORE: pending_restore,
             nm.DATA_ALEXA_RERESTORE_UNSUBS: {
                 "media_player.echo": pending_unsub,
             },
@@ -167,6 +170,8 @@ class TestUnloadEntry:
         pending_unsub.assert_called_once_with()
         assert "entry1" not in hass.data[DOMAIN]
         assert hass.data[DOMAIN][nm.DATA_ALEXA_LOCK] is lock
+        assert hass.data[DOMAIN][nm.DATA_ALEXA_WAITERS] == 1
+        assert hass.data[DOMAIN][nm.DATA_ALEXA_PENDING_RESTORE] is pending_restore
         assert hass.data[DOMAIN][nm.DATA_ALEXA_LAST_GOOD_VOLUMES] is last_good
         assert hass.data[DOMAIN][nm.DATA_ALEXA_LAST_GOOD_VOLUMES] == {
             "media_player.echo": 0.4,
@@ -252,10 +257,12 @@ class TestMultiEntrySetup:
         assert nm.DATA_ALEXA_RESOLVER not in hass.data[DOMAIN]
         # Shared house-level state still at domain root
         assert nm.DATA_ALEXA_LOCK in hass.data[DOMAIN]
+        assert hass.data[DOMAIN][nm.DATA_ALEXA_WAITERS] == 0
+        assert hass.data[DOMAIN][nm.DATA_ALEXA_PENDING_RESTORE] == {}
         assert nm.DATA_ALEXA_EMISSIONS in hass.data[DOMAIN]
         assert nm.DATA_ALEXA_GENERATIONS in hass.data[DOMAIN]
         assert nm.DATA_ALEXA_RERESTORE_UNSUBS in hass.data[DOMAIN]
-        assert nm.DATA_ALEXA_STORE in hass.data[DOMAIN]
+        assert nm.DATA_ALEXA_STORE not in hass.data[DOMAIN]
 
         assert registered == {
             (DOMAIN, "notify"),

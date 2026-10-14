@@ -26,13 +26,13 @@ from .const import (
     CONF_BRIDGE_URL,
     CONF_VERIFY_SSL,
     DEFAULT_BRIDGE_TOKEN,
-    DEFAULT_BRIDGE_URL,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     PHONE_DEFAULT_TARGETS,
     PHONE_TARGETS,
     WHATSAPP_CONTACTS,
 )
+from .runtime import _bridge_headers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -162,7 +162,7 @@ async def _async_validate_bridge(
 
     url = bridge_url.rstrip("/") + BRIDGE_HEALTH_ENDPOINT
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
-    headers = {"Authorization": f"Bearer {bridge_token}"}
+    headers = _bridge_headers(bridge_token)
 
     try:
         async with session.get(
@@ -231,7 +231,7 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=_bridge_schema(
-                DEFAULT_BRIDGE_URL, DEFAULT_BRIDGE_TOKEN, DEFAULT_VERIFY_SSL
+                "", DEFAULT_BRIDGE_TOKEN, DEFAULT_VERIFY_SSL
             ),
             errors=errors,
         )
@@ -280,7 +280,7 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reconfigure_bridge",
             data_schema=_bridge_schema(
-                entry.data.get(CONF_BRIDGE_URL, DEFAULT_BRIDGE_URL),
+                entry.data.get(CONF_BRIDGE_URL, ""),
                 entry.data.get(CONF_BRIDGE_TOKEN, DEFAULT_BRIDGE_TOKEN),
                 entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
             ),
@@ -566,7 +566,7 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="init",
             data_schema=_bridge_schema(
-                self.config_entry.data.get(CONF_BRIDGE_URL, DEFAULT_BRIDGE_URL),
+                self.config_entry.data.get(CONF_BRIDGE_URL, ""),
                 self.config_entry.data.get(CONF_BRIDGE_TOKEN, DEFAULT_BRIDGE_TOKEN),
                 self.config_entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
             ),

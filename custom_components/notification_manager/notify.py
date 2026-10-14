@@ -13,10 +13,13 @@ from .const import (
     ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
     ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
     CONF_BRIDGE_TOKEN,
-    CONF_BRIDGE_URL,
-    DEFAULT_BRIDGE_URL,
 )
-from .runtime import _entry_verify_ssl, _get_runtime_config, _run_logged
+from .runtime import (
+    _entry_bridge_url,
+    _entry_verify_ssl,
+    _get_runtime_config,
+    _run_logged,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -68,13 +71,19 @@ async def _async_handle_notify(
     if not isinstance(context_id, str):
         context_id = None
 
+    cfg = _get_runtime_config(entry)
+
     # Normalize channel selectors consistently (strip + lower) before gating.
     tel_selector = notification_tel.strip().lower()
     wa_selector = notification_whatsapp.strip().lower()
     alexa_selector = notification_alexa.strip().lower()
 
-    if message_alexa and alexa_selector not in (
-        "aucun", "none", "off", "disable"
+    if (
+        message_alexa
+        and (cfg["alexa_players"] or cfg["alexa_local_players"])
+        and alexa_selector not in (
+            "aucun", "none", "off", "disable"
+        )
     ):
         entry.async_create_task(
             hass,
@@ -87,9 +96,8 @@ async def _async_handle_notify(
             "notification_manager alexa tts",
         )
 
-    # message_alexa_en / alexa_en_target: unused by the maintainer; left as-is
-    # (candidate for later removal). Gating vs notification_alexa unchanged.
-    if message_alexa_en:
+    # English TTS is independent of the French notification_alexa selector.
+    if message_alexa_en and cfg["alexa_en_target"]:
         entry.async_create_background_task(
             hass,
             _run_logged(
@@ -100,6 +108,8 @@ async def _async_handle_notify(
             ),
             "notification_manager alexa tts en",
         )
+    elif message_alexa_en:
+        _LOGGER.debug("English Alexa TTS skipped: no alexa_en_target configured")
 
     # Phone, WhatsApp and Telegram group run concurrently and are awaited so
     # automations calling the service in blocking mode get delivery feedback.
@@ -124,18 +134,24 @@ async def _async_handle_notify(
     # schema/README; there is no separate message_whatsapp field). An empty
     # message_tel is forwarded as an empty string to the bridge.
     if wa_selector not in ("none", "aucun", ""):
-        bridge_url = entry.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
-        bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
-        tasks.append(
-            entry.async_create_task(
-                hass,
-                messaging_mod._async_send_whatsapp(
-                    hass, entry, message_tel, notification_whatsapp,
-                    bridge_url, bridge_token, _entry_verify_ssl(entry),
-                ),
-                "notification_manager whatsapp",
+        bridge_url = _entry_bridge_url(entry)
+        if not bridge_url:
+            _LOGGER.warning(
+                "WhatsApp requested (%s) but no bridge_url configured — skipped",
+                notification_whatsapp,
             )
-        )
+        else:
+            bridge_token = entry.data.get(CONF_BRIDGE_TOKEN, "")
+            tasks.append(
+                entry.async_create_task(
+                    hass,
+                    messaging_mod._async_send_whatsapp(
+                        hass, entry, message_tel, notification_whatsapp,
+                        bridge_url, bridge_token, _entry_verify_ssl(entry),
+                    ),
+                    "notification_manager whatsapp",
+                )
+            )
 
     if telegram_group:
         if message_tel or photo_path or photo_url:

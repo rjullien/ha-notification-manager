@@ -85,6 +85,14 @@ empêché le déclencheur `pull_request: branches: [main]` de `tests.yaml` de
 s'exécuter, si bien que les PR #22 et #23 n'ont porté aucun check-run jusqu'à
 leur retargeting sur `main`.
 
+## Règle 3 : auditer la config par canal
+
+Avant d'analyser une performance ou un bug sur un site, comparer les canaux
+réellement configurés dans `entry.data` et
+`/config/notification_manager_private.py` aux usages des automatisations.
+Lorsqu'un canal n'est pas utilisé, le vider dans la configuration plutôt que
+d'ajouter un contournement dans le code.
+
 ## Checklist avant de publier une revue ou un diagnostic
 
 - [ ] `git fetch origin` exécuté dans la session courante.

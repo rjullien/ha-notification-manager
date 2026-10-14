@@ -17,6 +17,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
@@ -36,6 +37,16 @@ from .telegram_text import PARSE_MODE_HTML, escape_html
 _LOGGER = logging.getLogger(__name__)
 
 DATA_WATCHDOG = "entity_watchdog"
+
+
+def _is_intentionally_disabled(hass: HomeAssistant, entity_id: str) -> bool:
+    reg = er.async_get(hass).async_get(entity_id)
+    if reg is not None and reg.disabled_by is not None:
+        return True
+    if reg is not None and reg.config_entry_id:
+        config_entry = hass.config_entries.async_get_entry(reg.config_entry_id)
+        return config_entry is not None and config_entry.disabled_by is not None
+    return False
 
 
 class EntityWatchdog:
@@ -129,6 +140,14 @@ class EntityWatchdog:
             state = self._hass.states.get(entity_id)
 
             if state is None or state.state in ("unavailable", "unknown"):
+                if _is_intentionally_disabled(self._hass, entity_id):
+                    _LOGGER.debug(
+                        "watchdog: %s disabled on purpose, skipped", entity_id
+                    )
+                    self._unavailable_since.pop(entity_id, None)
+                    self._last_alerted.pop(entity_id, None)
+                    continue
+
                 # Entity is currently unavailable
                 if entity_id not in self._unavailable_since:
                     self._unavailable_since[entity_id] = now
@@ -208,8 +227,12 @@ class EntityWatchdog:
                 )
 
 
-def async_setup_watchdog(hass: HomeAssistant, entry: ConfigEntry) -> EntityWatchdog:
+def async_setup_watchdog(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> EntityWatchdog | None:
     """Create and start the entity watchdog."""
+    if not WATCHDOG_ENTITIES and not WATCHDOG_CRITICAL_ENTITIES:
+        return None
     watchdog = EntityWatchdog(hass, entry)
     watchdog.start()
     return watchdog

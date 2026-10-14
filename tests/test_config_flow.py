@@ -216,6 +216,20 @@ class TestReconfigurePreservesEntryData:
         # Original entry dict must not be mutated
         assert entry_data["bridge_url"] == "http://old"
 
+    @pytest.mark.asyncio
+    async def test_new_config_bridge_url_defaults_to_empty(self):
+        cf = self._import()
+        flow = cf.NotificationManagerConfigFlow()
+        flow.async_set_unique_id = AsyncMock()
+        flow._abort_if_unique_id_configured = MagicMock()
+        flow.async_show_form = MagicMock(return_value={"type": "form"})
+
+        with patch.object(cf, "_bridge_schema", return_value="schema") as schema:
+            result = await flow.async_step_user()
+
+        assert result == {"type": "form"}
+        assert schema.call_args.args[0] == ""
+
 
 class TestReconfigureStructureValidation:
     """Reconfigure JSON fields must match the structures consumed at runtime."""

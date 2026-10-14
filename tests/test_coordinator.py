@@ -62,17 +62,23 @@ class TestCoordinatorInit:
 
             return NotificationManagerCoordinator, CONF_BRIDGE_URL, CONF_BRIDGE_TOKEN
 
+    @staticmethod
+    def _entry(data):
+        entry = MagicMock()
+        entry.data = data
+        return entry
+
     def test_init_with_url(self):
         """Coordinator stores bridge config."""
         Coord, CONF_BRIDGE_URL, CONF_BRIDGE_TOKEN = self._import_coordinator()
 
         hass = MagicMock()
-        entry_data = {
+        entry = self._entry({
             CONF_BRIDGE_URL: "http://bridge:8080",
             CONF_BRIDGE_TOKEN: "test-token",
-        }
+        })
 
-        coord = Coord(hass, entry_data)
+        coord = Coord(hass, entry)
         assert coord._bridge_url == "http://bridge:8080"
         assert coord._bridge_token == "test-token"
         assert coord.bridge_url == "http://bridge:8080"
@@ -82,9 +88,8 @@ class TestCoordinatorInit:
         Coord, _, _ = self._import_coordinator()
 
         hass = MagicMock()
-        coord = Coord(hass, {})
-        # Falls back to DEFAULT_BRIDGE_URL (empty from mock)
-        assert coord._bridge_url == "" or coord._bridge_url is not None
+        coord = Coord(hass, self._entry({}))
+        assert coord._bridge_url == ""
 
 def _response_cm(status: int):
     """Async-context-manager mock mimicking an aiohttp response."""
@@ -141,13 +146,19 @@ class TestCoordinatorUpdateData:
             "unknown": SENSOR_STATE_UNKNOWN,
         }
 
+    @staticmethod
+    def _entry(data):
+        entry = MagicMock()
+        entry.data = data
+        return entry
+
     @pytest.mark.asyncio
     async def test_http_200_connected(self):
         modules, _ = self._modules()
         with patch.dict(sys.modules, modules):
             coord_mod, c = self._fresh_import()
             coord = coord_mod.NotificationManagerCoordinator(
-                MagicMock(), {c["url"]: "http://b:8080", c["token"]: "t"}
+                MagicMock(), self._entry({c["url"]: "http://b:8080", c["token"]: "t"})
             )
             session = MagicMock()
             session.get = MagicMock(return_value=_response_cm(200))
@@ -155,12 +166,29 @@ class TestCoordinatorUpdateData:
                 assert await coord._async_update_data() == c["connected"]
 
     @pytest.mark.asyncio
+    async def test_empty_token_omits_authorization_header(self):
+        modules, _ = self._modules()
+        with patch.dict(sys.modules, modules):
+            coord_mod, c = self._fresh_import()
+            coord = coord_mod.NotificationManagerCoordinator(
+                MagicMock(),
+                self._entry({c["url"]: "http://b:8080", c["token"]: ""}),
+            )
+            session = MagicMock()
+            session.get = MagicMock(return_value=_response_cm(200))
+
+            with patch.object(coord_mod, "async_get_bridge_session", return_value=session):
+                assert await coord._async_update_data() == c["connected"]
+
+        assert session.get.call_args.kwargs["headers"] == {}
+
+    @pytest.mark.asyncio
     async def test_http_error_disconnected(self):
         modules, _ = self._modules()
         with patch.dict(sys.modules, modules):
             coord_mod, c = self._fresh_import()
             coord = coord_mod.NotificationManagerCoordinator(
-                MagicMock(), {c["url"]: "http://b:8080", c["token"]: "t"}
+                MagicMock(), self._entry({c["url"]: "http://b:8080", c["token"]: "t"})
             )
             session = MagicMock()
             session.get = MagicMock(return_value=_response_cm(503))
@@ -173,7 +201,7 @@ class TestCoordinatorUpdateData:
         with patch.dict(sys.modules, modules):
             coord_mod, c = self._fresh_import()
             coord = coord_mod.NotificationManagerCoordinator(
-                MagicMock(), {c["url"]: "http://b:8080", c["token"]: "t"}
+                MagicMock(), self._entry({c["url"]: "http://b:8080", c["token"]: "t"})
             )
             session = MagicMock()
             session.get = MagicMock(side_effect=aiohttp_m.ClientConnectorError())
@@ -187,7 +215,7 @@ class TestCoordinatorUpdateData:
         with patch.dict(sys.modules, modules):
             coord_mod, c = self._fresh_import()
             coord = coord_mod.NotificationManagerCoordinator(
-                MagicMock(), {c["url"]: "http://b:8080", c["token"]: "t"}
+                MagicMock(), self._entry({c["url"]: "http://b:8080", c["token"]: "t"})
             )
             session = MagicMock()
             session.get = MagicMock(
@@ -204,7 +232,8 @@ class TestCoordinatorUpdateData:
         with patch.dict(sys.modules, modules):
             coord_mod, c = self._fresh_import()
             coord = coord_mod.NotificationManagerCoordinator(
-                MagicMock(), {c["url"]: "http://b:8080", c["token"]: "t"}
+                MagicMock(),
+                self._entry({c["url"]: "http://b:8080", c["token"]: "t"}),
             )
             session = MagicMock()
             session.get = MagicMock(side_effect=TimeoutError())
@@ -216,9 +245,10 @@ class TestCoordinatorUpdateData:
         modules, _ = self._modules()
         with patch.dict(sys.modules, modules):
             coord_mod, c = self._fresh_import()
-            coord = coord_mod.NotificationManagerCoordinator(MagicMock(), {})
+            coord = coord_mod.NotificationManagerCoordinator(MagicMock(), self._entry({}))
             with patch.object(coord_mod, "async_get_bridge_session") as get_session:
-                assert await coord._async_update_data() in (c["unknown"], c["disconnected"])
+                assert await coord._async_update_data() == c["unknown"]
+                get_session.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unexpected_error_raises_update_failed(self):
@@ -226,7 +256,7 @@ class TestCoordinatorUpdateData:
         with patch.dict(sys.modules, modules):
             coord_mod, c = self._fresh_import()
             coord = coord_mod.NotificationManagerCoordinator(
-                MagicMock(), {c["url"]: "http://b:8080", c["token"]: "t"}
+                MagicMock(), self._entry({c["url"]: "http://b:8080", c["token"]: "t"})
             )
             session = MagicMock()
             session.get = MagicMock(side_effect=RuntimeError("boom"))
@@ -241,7 +271,12 @@ class TestCoordinatorUpdateData:
             coord_mod, c = self._fresh_import()
             hass = MagicMock()
             coord = coord_mod.NotificationManagerCoordinator(
-                hass, {c["url"]: "http://b:8080", c["token"]: "t", c["verify"]: False}
+                hass,
+                self._entry({
+                    c["url"]: "http://b:8080",
+                    c["token"]: "t",
+                    c["verify"]: False,
+                }),
             )
             session = MagicMock()
             session.get = MagicMock(return_value=_response_cm(200))
@@ -258,7 +293,7 @@ class TestCoordinatorUpdateData:
         with patch.dict(sys.modules, modules):
             coord_mod, c = self._fresh_import()
             coord = coord_mod.NotificationManagerCoordinator(
-                MagicMock(), {c["url"]: "http://b:8080", c["token"]: "t"}
+                MagicMock(), self._entry({c["url"]: "http://b:8080", c["token"]: "t"})
             )
             session = MagicMock()
             session.get = MagicMock(return_value=_response_cm(200))

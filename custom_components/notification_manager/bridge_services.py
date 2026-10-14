@@ -9,7 +9,7 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
-from homeassistant.exceptions import Unauthorized
+from homeassistant.exceptions import HomeAssistantError, Unauthorized
 from homeassistant.helpers import config_validation as cv
 
 from .alexa import (
@@ -20,12 +20,15 @@ from .alexa import (
 from .bridge_http import async_get_bridge_session
 from .const import (
     CONF_BRIDGE_TOKEN,
-    CONF_BRIDGE_URL,
-    DEFAULT_BRIDGE_URL,
     DOMAIN,
     SERVICE_RECENT_ALEXA_EMISSIONS,
 )
-from .runtime import _entry_verify_ssl, _get_primary_entry
+from .runtime import (
+    _bridge_headers,
+    _entry_bridge_url,
+    _entry_verify_ssl,
+    _get_primary_entry,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,11 +69,11 @@ def async_register_bridge_services(hass: HomeAssistant, _entry: ConfigEntry) -> 
             if active is None:
                 return {"error": "no config entry loaded"}
 
-            bridge_url = active.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
+            bridge_url = _entry_bridge_url(active)
             bridge_token = active.data.get(CONF_BRIDGE_TOKEN, "")
 
             if not bridge_url:
-                return {"error": "bridge_url not configured"}
+                raise HomeAssistantError("WhatsApp bridge not configured")
 
             url = bridge_url.rstrip("/") + "/logs"
             params = {"limit": str(call.data.get("limit", 100))}
@@ -78,7 +81,7 @@ def async_register_bridge_services(hass: HomeAssistant, _entry: ConfigEntry) -> 
             if level:
                 params["level"] = level
 
-            headers = {"Authorization": f"Bearer {bridge_token}"}
+            headers = _bridge_headers(bridge_token)
             http_session = async_get_bridge_session(hass, _entry_verify_ssl(active))
 
             try:
@@ -111,15 +114,15 @@ def async_register_bridge_services(hass: HomeAssistant, _entry: ConfigEntry) -> 
             if active is None:
                 return {"error": "no config entry loaded"}
 
-            bridge_url = active.data.get(CONF_BRIDGE_URL, "") or DEFAULT_BRIDGE_URL
+            bridge_url = _entry_bridge_url(active)
             bridge_token = active.data.get(CONF_BRIDGE_TOKEN, "")
 
             if not bridge_url:
-                return {"error": "bridge_url not configured"}
+                raise HomeAssistantError("WhatsApp bridge not configured")
 
             url = bridge_url.rstrip("/") + "/restart"
             headers = {
-                "Authorization": f"Bearer {bridge_token}",
+                **_bridge_headers(bridge_token),
                 "Content-Type": "application/json",
             }
             http_session = async_get_bridge_session(hass, _entry_verify_ssl(active))

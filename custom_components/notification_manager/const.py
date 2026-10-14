@@ -1,6 +1,8 @@
 """Constants for the Notification Manager integration."""
 
 DOMAIN = "notification_manager"
+DATA_ALEXA_WAITERS = "_alexa_waiters"
+DATA_ALEXA_PENDING_RESTORE = "_alexa_pending_restore"
 CONF_BRIDGE_URL = "bridge_url"
 CONF_BRIDGE_TOKEN = "bridge_token"
 CONF_VERIFY_SSL = "verify_ssl"
@@ -53,6 +55,11 @@ ALEXA_POST_TTS_DELAY = 8
 
 # Floor so a zero delay cannot cut speech off before volume restore.
 ALEXA_MIN_POST_TTS_DELAY = 2
+
+# Estimate spoken duration from text length.
+ALEXA_SPEECH_CHARS_PER_SECOND = 12
+ALEXA_SPEECH_OFFSET_SECONDS = 2.0
+ALEXA_SPEECH_MAX_SECONDS = 90
 
 # Re-check Alexa volume after delayed media-player state updates (seconds).
 ALEXA_RERESTORE_DELAY = 20
@@ -146,6 +153,7 @@ SENSOR_POLL_INTERVAL_MINUTES = 5
 SENSOR_STATE_CONNECTED = "connected"
 SENSOR_STATE_DISCONNECTED = "disconnected"
 SENSOR_STATE_UNKNOWN = "unknown"
+SENSOR_BRIDGE_STATUS_KEY = "whatsapp_status"
 
 # ── Service ───────────────────────────────────────────────────────────────────
 

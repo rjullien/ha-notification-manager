@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterable, Sequence
 
 # A TTS request is not instantaneous: the speaker keeps talking for a few
-# seconds. Callers pass the configured post-TTS delay as the estimate.
+# seconds. Callers pass the estimated speech interval as the duration.
 DEFAULT_SPEECH_ESTIMATE = timedelta(seconds=8)
 
 # Messages are truncated before being stored: the log is a diagnostic aid, not

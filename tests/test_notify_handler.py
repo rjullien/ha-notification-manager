@@ -61,6 +61,8 @@ def _make_entry(verify_ssl=True):
         "bridge_url": "http://bridge:8080",
         "bridge_token": "tok",
         "verify_ssl": verify_ssl,
+        "alexa_players": ["media_player.echo"],
+        "alexa_en_target": "media_player.echo",
     }
 
     def create_entry_task(hass, coro, name=None, eager_start=True):
