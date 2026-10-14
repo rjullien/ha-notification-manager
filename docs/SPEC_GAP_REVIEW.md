@@ -14,16 +14,16 @@ L'estimation de la durée TTS en fait partie.
 
 | # | Point de spec | Source | État sur `origin/main` | Suite proposée |
 |---|---|---|---|---|
-| 1 | Durée d'attente estimée depuis la longueur du texte (plancher = `alexa_post_tts_delay`), même valeur pour `speech_estimate` | P1 §« Estimation de durée », P1 chantier 7, P2 §2.2, Devin §5 | Délai fixe : `alexa.py:452` `max(delay, 2)`, `alexa.py:325` `speech_estimate = alexa_post_tts_delay` | **En cours dans la PR 1.11.0** (2 s + 1 s par tranche de 12 caractères, plafond 90 s) |
-| 2 | Échecs `volume_set` : récupérer les bools du `gather`, warning groupé, ne jamais bloquer le TTS | P1 item 1, P2 §2.3 #1, Devin « Ajouts » | `alexa.py:430` : résultat du `gather` ignoré | Ajout dans la PR 1.11.0 (petit) |
-| 3 | Header `Authorization` seulement si le token est non vide, helper partagé par les appels bridge | P2 §2.5, P3 §3.4 | Fait seulement dans `messaging.py:226`. Toujours `Bearer ` vide dans `bridge_services.py:81`, `:122`, `coordinator.py:58`, `config_flow.py:165` | Ajout dans la PR 1.11.0 (petit) |
-| 4 | Coalescing sous le verrou global : sauter le restore intermédiaire quand un cycle suivant attend déjà | P2 §2.2, P3 §3.1/3.4, Devin Q2 | Absent (`git grep -i coalesc` : rien) | Décision René |
-| 5 | Une file par Echo (les pièces ne s'attendent plus, une seule montée/descente pour une rafale) | P1 design cible, chantier 6 | Absent, verrou global unique | Décision René (gros chantier) |
+| 1 | Durée d'attente estimée depuis la longueur du texte (plancher = `alexa_post_tts_delay`), même valeur pour `speech_estimate` | P1 §« Estimation de durée », P1 chantier 7, P2 §2.2, Devin §5 | Délai fixe : `alexa.py:452` `max(delay, 2)`, `alexa.py:325` `speech_estimate = alexa_post_tts_delay` | **Fait dans la PR 1.11.0** (2 s + 1 s / 12 caractères, plafond 90 s) |
+| 2 | Échecs `volume_set` : récupérer les bools du `gather`, warning groupé, ne jamais bloquer le TTS | P1 item 1, P2 §2.3 #1, Devin « Ajouts » | `alexa.py:430` : résultat du `gather` ignoré | **Fait dans la PR 1.11.0** |
+| 3 | Header `Authorization` seulement si le token est non vide, helper partagé par les appels bridge | P2 §2.5, P3 §3.4 | Fait seulement dans `messaging.py:226`. Toujours `Bearer ` vide dans `bridge_services.py:81`, `:122`, `coordinator.py:58`, `config_flow.py:165` | **Fait dans la PR 1.11.0** |
+| 4 | Coalescing sous le verrou global : sauter le restore intermédiaire quand un cycle suivant attend déjà | P2 §2.2, P3 §3.1/3.4, Devin Q2 | Absent (`git grep -i coalesc` : rien) | **Fait dans la PR 1.11.0** : tant qu'un cycle attend le verrou, pas de restore ; le dernier cycle restaure tout (restore immédiat si annulation) |
+| 5 | Une file par Echo (les pièces ne s'attendent plus, une seule montée/descente pour une rafale) | P1 design cible, chantier 6 | Absent, verrou global unique | **Décidé : pas pour le moment** (René, 14 oct.). Le verrou global + coalescing couvre le besoin. |
 | 6 | Pause ~2 s ou relecture entre `volume_set` et TTS (batching alexapy `queue_delay` 1,5 s) | P1 item 2, P2 §2.3 #2 | Absent | À tester sur une vraie Echo avant de coder |
-| 7 | Chemin EN : sous verrou, ou supprimé | P2 §2.2, `ALEXA_EN_LOCK_NOTE.md`, plan D | Toujours hors verrou, sans volume, délai fixe 3 s (`alexa.py:559`) | Décision René : supprimer / garder / aligner |
-| 8 | « Config vide impossible » : `[]`/`{}` sauvé dans l'UI retombe sur `const_private` | Plan D, DIAGNOSTIC §2 | `runtime.py` : 8 × `d.get(x) or _CONST_…` | Décision René : documenter ou `is not None` |
+| 7 | Chemin EN : sous verrou, ou supprimé | P2 §2.2, `ALEXA_EN_LOCK_NOTE.md`, plan D | Toujours hors verrou, sans volume, délai fixe 3 s (`alexa.py:559`) | **Décidé : rien à faire** — Echo dédiée, pas de conflit de volume (René) |
+| 8 | « Config vide impossible » : `[]`/`{}` sauvé dans l'UI retombe sur `const_private` | Plan D, DIAGNOSTIC §2 | `runtime.py` : 8 × `d.get(x) or _CONST_…` | **Décidé : feature** — fallback d'initialisation sur le fichier privé ; un canal défini dans le fichier privé ne se désactive pas en vidant l'UI |
 | 9 | Watchdog : entité supprimée ou `unknown` alerte toutes les 6 h sans fin | Plan D, DIAGNOSTIC §2, Kiro §3 | `watchdog.py:131/144` inchangé | Décision René : alerter sur `unknown` ou non, absente = une seule alerte |
-| 10 | Test aller-retour avec un vrai `Store` | DIAGNOSTIC §4, Kiro §2 | `FakeStore` seulement (HA n'est pas installé dans les tests, tout est mocké) | Couvert seulement par le smoke test |
+| 10 | Test aller-retour avec un vrai `Store` | DIAGNOSTIC §4, Kiro §2 | `FakeStore` seulement (HA n'est pas installé dans les tests, tout est mocké) | **Accepté** (René) : couvert par le smoke test |
 | 11 | Smoke test sur une vraie instance : TTS ciblé, reload pendant le TTS, restart pendant le TTS | Plan §4, Devin, DIAGNOSTIC | Jamais fait (1.10.1 déployée sans faire parler d'Echo) | Après la 1.11.0, avec ton accord (une Echo parle) |
 
 ## Écarté volontairement (décision tracée)

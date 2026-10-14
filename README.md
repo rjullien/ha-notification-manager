@@ -106,6 +106,8 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 
 > Site-specific player lists and exclude maps live in the private Home Assistant config repo (not in this public component). This repo documents the mechanism only — see `const_private.example.py` for placeholder shape.
 
+An empty list saved in the UI falls back to `notification_manager_private.py`: to disable a channel, leave it undefined in the private file too.
+
 > The algorithm is inherited from the original mamagetts automation: substring matching gives flexibility without maintaining a separate name→entity mapping.
 
 ---
