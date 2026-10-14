@@ -44,6 +44,13 @@ def _entry_bridge_url(entry: ConfigEntry) -> str:
     return bridge_url
 
 
+def _bridge_headers(token: str) -> dict[str, str]:
+    """Return bridge auth headers only when a non-empty token is configured."""
+    if not token.strip():
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
 async def _run_logged(coro: Awaitable, label: str) -> None:
     """Await a background coroutine and log (never raise) its failure."""
     try:

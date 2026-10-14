@@ -32,6 +32,7 @@ from .const import (
     PHONE_TARGETS,
     WHATSAPP_CONTACTS,
 )
+from .runtime import _bridge_headers
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -161,7 +162,7 @@ async def _async_validate_bridge(
 
     url = bridge_url.rstrip("/") + BRIDGE_HEALTH_ENDPOINT
     session = async_get_clientsession(hass, verify_ssl=verify_ssl)
-    headers = {"Authorization": f"Bearer {bridge_token}"}
+    headers = _bridge_headers(bridge_token)
 
     try:
         async with session.get(

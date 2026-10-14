@@ -21,7 +21,7 @@ from .const import (
     SENSOR_STATE_UNKNOWN,
 )
 from .bridge_http import async_get_bridge_session
-from .runtime import _entry_bridge_url, _entry_verify_ssl
+from .runtime import _bridge_headers, _entry_bridge_url, _entry_verify_ssl
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class NotificationManagerCoordinator(DataUpdateCoordinator[str]):
             return SENSOR_STATE_UNKNOWN
 
         url = self._bridge_url.rstrip("/") + BRIDGE_HEALTH_ENDPOINT
-        headers = {"Authorization": f"Bearer {self._bridge_token}"}
+        headers = _bridge_headers(self._bridge_token)
 
         # Tailscale MagicDNS hostnames are handled by the session's custom
         # resolver (bridge_http.py) — no /etc/hosts manipulation needed.

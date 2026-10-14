@@ -166,6 +166,23 @@ class TestCoordinatorUpdateData:
                 assert await coord._async_update_data() == c["connected"]
 
     @pytest.mark.asyncio
+    async def test_empty_token_omits_authorization_header(self):
+        modules, _ = self._modules()
+        with patch.dict(sys.modules, modules):
+            coord_mod, c = self._fresh_import()
+            coord = coord_mod.NotificationManagerCoordinator(
+                MagicMock(),
+                self._entry({c["url"]: "http://b:8080", c["token"]: ""}),
+            )
+            session = MagicMock()
+            session.get = MagicMock(return_value=_response_cm(200))
+
+            with patch.object(coord_mod, "async_get_bridge_session", return_value=session):
+                assert await coord._async_update_data() == c["connected"]
+
+        assert session.get.call_args.kwargs["headers"] == {}
+
+    @pytest.mark.asyncio
     async def test_http_error_disconnected(self):
         modules, _ = self._modules()
         with patch.dict(sys.modules, modules):

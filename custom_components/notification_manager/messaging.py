@@ -18,7 +18,7 @@ from .const import (
     DEFAULT_VERIFY_SSL,
 )
 from .jid_utils import jid_to_phone
-from .runtime import _get_runtime_config
+from .runtime import _bridge_headers, _get_runtime_config
 from .telegram_text import PARSE_MODE_PLAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -216,14 +216,10 @@ async def _async_send_whatsapp(
     _LOGGER.debug("WhatsApp targets: %s", targets)
 
     session = async_get_bridge_session(hass, verify_ssl)
-    headers = {
-        "Content-Type": "application/json",
-    }
+    headers = {"Content-Type": "application/json", **_bridge_headers(bridge_token)}
     # Bearer auth matches the pattern used by the health check, logs and
     # restart endpoints; bridges without auth (e.g. GoWA over Tailscale)
     # ignore it. Omitted entirely when no token is configured.
-    if bridge_token:
-        headers["Authorization"] = f"Bearer {bridge_token}"
     url = bridge_url.rstrip("/") + BRIDGE_SEND_ENDPOINT
 
     results = await asyncio.gather(

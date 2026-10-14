@@ -23,7 +23,12 @@ from .const import (
     DOMAIN,
     SERVICE_RECENT_ALEXA_EMISSIONS,
 )
-from .runtime import _entry_bridge_url, _entry_verify_ssl, _get_primary_entry
+from .runtime import (
+    _bridge_headers,
+    _entry_bridge_url,
+    _entry_verify_ssl,
+    _get_primary_entry,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,7 +81,7 @@ def async_register_bridge_services(hass: HomeAssistant, _entry: ConfigEntry) -> 
             if level:
                 params["level"] = level
 
-            headers = {"Authorization": f"Bearer {bridge_token}"}
+            headers = _bridge_headers(bridge_token)
             http_session = async_get_bridge_session(hass, _entry_verify_ssl(active))
 
             try:
@@ -117,7 +122,7 @@ def async_register_bridge_services(hass: HomeAssistant, _entry: ConfigEntry) -> 
 
             url = bridge_url.rstrip("/") + "/restart"
             headers = {
-                "Authorization": f"Bearer {bridge_token}",
+                **_bridge_headers(bridge_token),
                 "Content-Type": "application/json",
             }
             http_session = async_get_bridge_session(hass, _entry_verify_ssl(active))

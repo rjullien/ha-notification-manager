@@ -59,6 +59,17 @@ def _make_hass(*, is_running=True):
 
 
 class TestBridgeConfiguration:
+    @pytest.mark.parametrize(
+        ("token", "expected"),
+        [
+            ("", {}),
+            ("   ", {}),
+            ("secret", {"Authorization": "Bearer secret"}),
+        ],
+    )
+    def test_bridge_headers_only_include_nonempty_token(self, token, expected):
+        assert runtime._bridge_headers(token) == expected
+
     @pytest.mark.parametrize("bridge_url", ["", DEFAULT_BRIDGE_URL])
     async def test_unconfigured_bridge_skips_platform_and_removes_stale_sensor(
         self, bridge_url, caplog
@@ -372,6 +383,31 @@ class TestBridgeServicesWithoutBridge:
 
         with pytest.raises(HomeAssistantError, match="WhatsApp bridge not configured"):
             await registered[(DOMAIN, service_name)](call)
+
+    async def test_bridge_logs_omits_authorization_for_empty_token(self):
+        hass, registered = _make_hass()
+        entry = _make_entry(bridge_token="")
+        hass.data[DOMAIN] = {entry.entry_id: {}}
+        hass.config_entries.async_get_entry.return_value = entry
+        bridge_services.async_register_bridge_services(hass, entry)
+
+        response = MagicMock(status=200)
+        response.json = AsyncMock(return_value={"logs": []})
+        request = MagicMock()
+        request.__aenter__ = AsyncMock(return_value=response)
+        request.__aexit__ = AsyncMock(return_value=False)
+        session = MagicMock()
+        session.get = MagicMock(return_value=request)
+        call = MagicMock()
+        call.context.user_id = None
+        call.data = {}
+
+        with patch.object(
+            bridge_services, "async_get_bridge_session", return_value=session
+        ):
+            await registered[(DOMAIN, "whatsapp_bridge_logs")](call)
+
+        assert session.get.call_args.kwargs["headers"] == {}
 
 
 class TestWatchdogConditionalSetup:
