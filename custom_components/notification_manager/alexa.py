@@ -138,21 +138,29 @@ async def _async_restore_volumes(
 ) -> None:
     """Restore all resting volumes concurrently, retrying each failure once."""
 
-    async def restore_one(entity_id: str, vol_level: float) -> None:
+    async def restore_one(entity_id: str, vol_level: float) -> bool:
         ok = await _async_set_volume(hass, entity_id, vol_level)
         if not ok:
             _LOGGER.warning(
                 "Retrying volume restore for %s to %.2f", entity_id, vol_level
             )
             await asyncio.sleep(ALEXA_RESTORE_RETRY_DELAY)
-            await _async_set_volume(hass, entity_id, vol_level)
+            ok = await _async_set_volume(hass, entity_id, vol_level)
+        return ok
 
-    await asyncio.gather(
+    results = await asyncio.gather(
         *(
             restore_one(entity_id, vol_level)
             for entity_id, vol_level in original_volumes.items()
         )
     )
+    failed = [
+        entity_id
+        for entity_id, ok in zip(original_volumes, results)
+        if not ok
+    ]
+    if failed:
+        _LOGGER.warning("Alexa volume restore failed after retry for %s", failed)
 
 
 async def _async_restore_saved_volumes(hass: HomeAssistant) -> int:
@@ -453,9 +461,20 @@ async def _async_send_alexa(
         try:
             # 2. Set volume to TTS level — blocking + awaited BEFORE the TTS is
             #    sent, so speech can never start at the old volume.
-            await asyncio.gather(
+            tts_volume_results = await asyncio.gather(
                 *(_async_set_volume(hass, eid, alexa_tts_volume) for eid in targets)
             )
+            failed = [
+                entity_id
+                for entity_id, ok in zip(targets, tts_volume_results)
+                if not ok
+            ]
+            if failed:
+                _LOGGER.warning(
+                    "Alexa volume_set to %.2f failed for %s — TTS sent anyway",
+                    alexa_tts_volume,
+                    failed,
+                )
 
             # 3. Send TTS
             try:

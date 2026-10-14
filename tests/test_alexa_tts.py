@@ -260,6 +260,74 @@ class TestAlexaVolumeCycle:
 
         sleep.assert_awaited_once_with(ALEXA_MIN_POST_TTS_DELAY)
 
+    async def test_failed_tts_volume_set_warns_but_still_sends_tts(self, caplog):
+        hass = _make_hass([])
+        entry = _make_entry()
+
+        with caplog.at_level(logging.WARNING, logger=alexa.__name__), patch.object(
+            alexa,
+            "_async_set_volume",
+            new=AsyncMock(side_effect=[False, True]),
+        ), patch.object(alexa.asyncio, "sleep", new=AsyncMock()):
+            await _async_send_alexa(hass, entry, "Bonjour", "show")
+
+        tts_calls = [
+            call
+            for call in hass.services.async_call.await_args_list
+            if call.args[:2] == ("notify", "alexa_media")
+        ]
+        assert len(tts_calls) == 1
+        warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == alexa.__name__ and record.levelno == logging.WARNING
+        ]
+        assert warnings == [
+            "Alexa volume_set to 0.70 failed for "
+            "['media_player.echo_show_bedroom'] — TTS sent anyway"
+        ]
+
+    async def test_successful_tts_volume_sets_do_not_warn(self, caplog):
+        hass = _make_hass([])
+
+        with caplog.at_level(logging.WARNING, logger=alexa.__name__), patch.object(
+            alexa, "_async_set_volume", new=AsyncMock(return_value=True)
+        ), patch.object(alexa.asyncio, "sleep", new=AsyncMock()):
+            await _async_send_alexa(hass, _make_entry(), "Bonjour", "show")
+
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == alexa.__name__ and record.levelno == logging.WARNING
+        ]
+
+    async def test_final_restore_failure_is_warned_once_as_a_group(self, caplog):
+        hass = _make_hass([])
+        attempts: dict[str, int] = {}
+
+        async def set_volume(_hass, entity_id, _volume):
+            attempts[entity_id] = attempts.get(entity_id, 0) + 1
+            return entity_id != "media_player.failed"
+
+        with caplog.at_level(logging.WARNING, logger=alexa.__name__), patch.object(
+            alexa, "_async_set_volume", new=AsyncMock(side_effect=set_volume)
+        ), patch.object(alexa.asyncio, "sleep", new=AsyncMock()):
+            await _async_restore_volumes(
+                hass,
+                {"media_player.failed": 0.4, "media_player.ok": 0.3},
+            )
+
+        assert attempts == {"media_player.failed": 2, "media_player.ok": 1}
+        grouped_warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == alexa.__name__
+            and "Alexa volume restore failed after retry" in record.getMessage()
+        ]
+        assert grouped_warnings == [
+            "Alexa volume restore failed after retry for ['media_player.failed']"
+        ]
+
     async def test_restore_retries_concurrently_after_one_second(self):
         """All targets start restore together and a failed one retries after a pause."""
         hass = _make_hass([])
