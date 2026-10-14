@@ -90,6 +90,46 @@ Règle : si un canal n'est pas déclaré dans la config, son empreinte mémoire 
 
 Sur un P3 sans Alexa ni WhatsApp, le composant se réduit à un handler notify minimal : parse des arguments, dispatch éventuel. C'est l'idéal pour du matériel limité. Le principe s'étend à tout futur canal : chaque ajout doit être conditionnel à sa présence en config.
 
+## Note 6 — Sensor WhatsApp toujours forwardé (optimisation P3)
+
+### Problème
+
+Dans `__init__.py`, `async_forward_entry_setups` forward toujours la plateforme sensor, quel que soit le contenu de la config. Résultat : le coordinator de polling du bridge et le sensor de statut démarrent même sans `bridge_url` configuré. Le coordinator interroge le endpoint /health toutes les cinq minutes pour rien.
+
+### Proposition
+
+Conditionner le forward de la plateforme sensor à la présence d'un `bridge_url` dans `entry.data`. Sans bridge, pas de coordinator, pas de sensor, pas de polling. Au setup, la config se lit directement dans `entry.data` — c'est déjà le pattern utilisé par `_get_runtime_config`.
+
+### Impact attendu
+
+Supprime un polling réseau et une entité sensor inutiles sur une instance sans WhatsApp. Sur un P3, chaque requête évité compte.
+
+## Note 7 — `_get_runtime_config` reconstruit un dict à chaque appel
+
+### Problème
+
+`_get_runtime_config` dans `runtime.py` fusionne `entry.data` avec les constantes à chaque appel. Dans un cycle Alexa, il est appelé au moins trois fois (résolution des targets, volume TTS, post-delay). Le travail est redondant.
+
+### Proposition
+
+Cacher le résultat une fois par cycle et le passer en paramètre aux fonctions qui en ont besoin, ou le mettre en cache au niveau de l'entry avec invalidation sur reload.
+
+### Impact attendu
+
+Négligeable en CPU, mais c'est du travail répété gratuit. Utile sur un P3 pour la propreté.
+
+## Note 8 — Audit de config côté agent : retirer ce qui n'est plus utile
+
+### Instruction pour les agents
+
+Quand un agent travaille sur ce repo, il doit regarder la config des clients (entry.data, const_private, exemples) et vérifier qu'il n'y a pas de choses configurées qui sont inutiles. Par exemple : de l'Alexa configuré sur une instance qui n'en a pas, des contacts WhatsApp morts, des phone targets sans mobile ni chat id, des telegram groups non utilisés. L'objectif est de limiter au maximum l'empreinte mémoire du composant sur du matériel comme un P3.
+
+Concrètement : si le client n'utilise pas Alexa, on peut déconfigurer Alexa (vider alexa_players) pour que les early returns des notes 4 et 5 s'appliquent. Même logique pour WhatsApp : si le bridge n'est plus utilisé, retirer bridge_url pour désactiver coordinator et sensor.
+
+### Impact attendu
+
+Combiné aux notes 4 à 6, ça permet de réduire le composant à son strict minimum fonctionnel par instance.
+
 ## Notes générales
 
 - Le boot recovery à soixante secondes couvre déjà le cas du bug 2, donc c'est un fallback acceptable.
@@ -97,3 +137,6 @@ Sur un P3 sans Alexa ni WhatsApp, le composant se réduit à un handler notify m
 - Le bug 3 est documenté pour traçabilité mais explicitement hors scope.
 - La note 4 est une optimisation, pas un bug : le composant fonctionne sans, mais c'est du gaspillage de ressources sur du matériel limité.
 - La note 5 généralise le principe de la note 4 à tous les canaux du composant.
+- La note 6 cible le forward systématique de la plateforme sensor.
+- La note 7 cible la reconstruction répétée du dict runtime.
+- La note 8 est une instruction de travail pour les agents : auditer et nettoyer la config client.
