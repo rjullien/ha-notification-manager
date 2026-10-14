@@ -1,59 +1,50 @@
-# Analyse des bugs Alexa — restore volumes
+# Analyse des bugs Alexa restants
 
 Date : 14 octobre 2026
 Branche : fix/alexa-bugs
 
 ## Bug 1 : `asyncio.gather` sans `return_exceptions=True` dans `_async_restore_volumes`
 
-### Contexte
-
-Dans `alexa.py`, la fonction `_async_restore_volumes` fait un `asyncio.gather` sur les tâches `restore_one` pour chaque enceinte Alexa. Chaque `restore_one` fait un `volume_set` bloquant, et en cas d'échec il attend `ALEXA_RESTORE_RETRY_DELAY` (une seconde) puis retente.
-
 ### Problème
 
-Sans `return_exceptions=True`, si une tâche lève une exception autre qu'une `CancelledError` — par exemple une erreur non catchée du service `volume_set` — le `gather` propage l'exception immédiatement. Les autres enceintes ne sont alors jamais restaurées : elles restent bloquées au volume TTS.
+Dans `alexa.py`, la fonction `_async_restore_volumes` fait un `asyncio.gather` sur les `restore_one` sans `return_exceptions=True`. Chaque `restore_one` fait un `volume_set` bloquant, et s'il échoue il attend `ALEXA_RESTORE_RETRY_DELAY` puis retente.
+
+Si une tâche lève une exception autre qu'une `CancelledError` — par exemple une erreur non catchée du service `volume_set` — le `gather` propage tout de suite et les autres enceintes ne sont jamais restaurées.
 
 ### Fix proposé
 
+Passer `return_exceptions=True` au `gather`, puis itérer sur les résultats pour logger chaque échec sans bloquer les autres :
+
 ```python
 results = await asyncio.gather(
-    *(restore_one(entity_id) for entity_id in targets),
+    *(restore_one(target) for target in targets),
     return_exceptions=True,
 )
-for entity_id, result in zip(targets, results):
+for result in results:
     if isinstance(result, Exception):
-        _logger.error(
-            "Échec restauration volume pour %s : %s", entity_id, result
-        )
+        _logger.error("Restore failed: %s", result)
 ```
 
-Ça garantit que toutes les enceintes sont tentées même si l'une plante, et les échecs sont loggés au lieu de faire échouer le cycle entier.
+Ça garantit que toutes les enceintes sont tentées même si l'une plante.
 
-### Note
-
-Le code de ce fix n'est pas inclus ici volontairement : à implémenter manuellement pour garder le contrôle sur le diff.
-
----
-
-## Bug 2 : jobs de re-restore planifiés après le `finally` dans `_async_send_alexa`
-
-### Contexte
-
-Dans `_async_send_alexa`, le bloc `try` envoie le TTS et attend le `post_tts_delay`. Le `finally` restaure les volumes. Juste après le `finally`, si l'entry est encore `LOADED`, on schedule les `_async_rerestore` avec `async_call_later` à `ALEXA_RERESTORE_DELAY` (vingt secondes).
+## Bug 2 : Re-restore jobs planifiés après le `finally` dans `_async_send_alexa`
 
 ### Problème
 
-Si une `CancelledError` est levée dans le `try` — par exemple lors d'un unload de Home Assistant — le handler la log, la relance, et le `finally` s'exécute bien (restauration des volumes). Mais le code situé après le `finally` ne s'exécute jamais : les jobs de re-restore ne sont donc pas créés.
+Dans `_async_send_alexa`, le bloc `try` envoie le TTS et attend le `post_tts_delay`. Le `finally` restaure les volumes. Juste après le `finally`, si l'entry est encore `LOADED`, on schedule les `_async_rerestore` avec `async_call_later` à `ALEXA_RERESTORE_DELAY`.
 
-Conséquence : une enceinte qui reste bloquée au volume TTS après un arrêt de HA n'est corrigée que par le boot recovery, soixante secondes plus tard. C'est un fallback acceptable, mais pas idéal.
+Sauf que si une `CancelledError` est levée dans le `try` — par exemple un unload de Home Assistant — le handler log, relance, et le `finally` s'exécute, mais le code après le `finally` ne s'exécute jamais. Résultat : les jobs de re-restore ne sont pas créés, et une enceinte qui reste bloquée au volume TTS après un arrêt de HA n'est corrigée que par le boot recovery soixante secondes plus tard.
 
-### Options de fix
+### Fix proposé
 
-1. **Déplacer le scheduling des re-restore à l'intérieur du `finally`**, juste après la restauration des volumes. Avantage : les jobs sont créés même en cas d'annulation. Inconvénient : le `finally` devient plus chargé et moins lisible.
-2. **Accepter le boot recovery comme seule filet** et documenter ce comportement. Avantage : logique plus simple. Inconvénient : latence de soixante secondes dans le pire cas.
+Deux options :
+
+1. Déplacer le scheduling des re-restore à l'intérieur du `finally`, juste après la restauration des volumes.
+2. Accepter le boot recovery comme seule filet de sécurité.
 
 Le choix dépend de si tu préfères un re-restore immédiat ou une logique plus simple.
 
-### Note
+## Notes
 
-Comme pour le bug 1, le code n'est pas inclus : à implémenter selon le choix retenu.
+- Le boot recovery couvre le cas d'un arrêt de HA en pleine annonce à soixante secondes, donc le bug 2 est acceptable comme fallback.
+- Le bug 1 est le plus sérieux : une erreur inattendue sur une seule enceinte fait échouer toutes les restaurations du cycle.
