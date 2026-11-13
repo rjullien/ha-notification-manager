@@ -204,7 +204,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 last_good.setdefault(entity_id, volume)
 
         if not hass.is_running:
+            boot_recovery_fired = False
+
             def schedule_boot_recovery(_event) -> None:
+                nonlocal boot_recovery_fired
+                boot_recovery_fired = True
                 cancel_timer = async_call_later(
                     hass,
                     ALEXA_BOOT_RECOVERY_DELAY,
@@ -216,7 +220,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 EVENT_HOMEASSISTANT_STARTED,
                 schedule_boot_recovery,
             )
-            entry.async_on_unload(unsubscribe)
+
+            def _unsubscribe_boot_recovery() -> None:
+                # listen_once se retire tout seul après émission ; le retirer
+                # une deuxième fois au unload provoque « Unable to remove
+                # unknown job listener » (core HA) à chaque reload. Ne retirer
+                # que s'il n'a pas encore tiré (entry déchargée avant démarrage).
+                if not boot_recovery_fired:
+                    unsubscribe()
+
+            entry.async_on_unload(_unsubscribe_boot_recovery)
     if platforms:
         await hass.config_entries.async_forward_entry_setups(entry, platforms)
     else:
