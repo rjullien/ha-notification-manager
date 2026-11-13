@@ -316,10 +316,21 @@ class TestAlexaBootRecovery:
         hass.bus.async_listen_once.assert_called_once()
         event, callback = hass.bus.async_listen_once.call_args.args
         assert event == "homeassistant_started"
-        entry.async_on_unload.assert_any_call(hass.bus.async_listen_once.return_value)
+        # Le raw unsub n'est PAS enregistré tel quel : un wrapper ne l'appelle
+        # que si le listener n'a pas encore émis (listen_once s'auto-retire
+        # après émission — retirer deux fois logge « Unable to remove unknown
+        # job listener » au reload).
+        unload_cbs = [c.args[0] for c in entry.async_on_unload.call_args_list]
+        raw_unsub = hass.bus.async_listen_once.return_value
+        assert raw_unsub not in unload_cbs
+        remove_listener_cb = unload_cbs[-1]
 
         with patch.object(nm, "async_call_later", return_value=timer_cancel) as later:
             callback(MagicMock())
+
+        # unload APRÈS émission : le wrapper ne doit pas re-retirer le listener
+        remove_listener_cb()
+        raw_unsub.assert_not_called()
 
         later.assert_called_once()
         scheduled_hass, delay, recovery = later.call_args.args
