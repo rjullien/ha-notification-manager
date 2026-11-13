@@ -13,6 +13,7 @@ from .const import (
     ALEXA_POST_TTS_DELAY as _CONST_ALEXA_POST_TTS_DELAY,
     ALEXA_TTS_VOLUME as _CONST_ALEXA_TTS_VOLUME,
     CONF_BRIDGE_TOKEN,
+    DEFAULT_TELEGRAM_BOT,
 )
 from .runtime import (
     _entry_bridge_url,
@@ -49,9 +50,11 @@ async def _async_handle_notify(
     photo_path: str = data.get("photo_path", "")
     photo_url: str = data.get("photo_url", "")
     parse_mode: str = data.get("parse_mode", "")
+    telegram_bot: str = data.get("telegram_bot", DEFAULT_TELEGRAM_BOT) or DEFAULT_TELEGRAM_BOT
 
     _LOGGER.debug(
-        "notify called — tel=%r alexa=%r alexa_en=%r n_tel=%r n_wa=%r n_alexa=%r group=%r photo=%r",
+        "notify called — tel=%r alexa=%r alexa_en=%r n_tel=%r n_wa=%r n_alexa=%r "
+        "group=%r photo=%r telegram_bot=%r",
         message_tel,
         message_alexa,
         message_alexa_en,
@@ -60,6 +63,7 @@ async def _async_handle_notify(
         notification_alexa,
         telegram_group,
         photo_path or photo_url,
+        telegram_bot,
     )
 
     # HA waits up to 10 seconds for config-entry tasks at unload, letting the
@@ -123,6 +127,7 @@ async def _async_handle_notify(
                 messaging_mod._async_send_phone(
                     hass, entry, message_tel, notification_tel,
                     parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+                    telegram_bot=telegram_bot,
                 ),
                 "notification_manager phone",
             )
@@ -161,6 +166,7 @@ async def _async_handle_notify(
                     messaging_mod._async_send_telegram_group(
                         hass, entry, message_tel, telegram_group,
                         parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+                        telegram_bot=telegram_bot,
                     ),
                     "notification_manager telegram group",
                 )

@@ -24,12 +24,15 @@ from .const import (
     BRIDGE_TIMEOUT,
     CONF_BRIDGE_TOKEN,
     CONF_BRIDGE_URL,
+    CONF_TELEGRAM_BOTS,
     CONF_VERIFY_SSL,
     DEFAULT_BRIDGE_TOKEN,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     PHONE_DEFAULT_TARGETS,
     PHONE_TARGETS,
+    TELEGRAM_BOT_INFO,
+    TELEGRAM_BOT_PRINCIPAL,
     WHATSAPP_CONTACTS,
 )
 from .runtime import _bridge_headers
@@ -522,9 +525,22 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return NotificationManagerOptionsFlow()
 
 
-class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
-    """Handle options for Notification Manager (bridge URL/token/TLS only).
+def _telegram_bots_from_input(user_input: dict[str, Any]) -> dict[str, str]:
+    """Build the telegram_bots map from options-flow fields."""
+    bots: dict[str, str] = {}
+    principal = user_input.get("telegram_bot_principal")
+    info = user_input.get("telegram_bot_info")
+    if isinstance(principal, str) and principal.strip():
+        bots[TELEGRAM_BOT_PRINCIPAL] = principal.strip()
+    if isinstance(info, str) and info.strip():
+        bots[TELEGRAM_BOT_INFO] = info.strip()
+    return bots
 
+
+class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
+    """Handle options for Notification Manager.
+
+    Bridge URL/token/TLS plus logical telegram_bot → config entry mapping.
     Note: no custom __init__ — explicitly setting self.config_entry was
     deprecated in HA 2024.11 and removed in 2025.12; the base class now
     provides the config_entry property.
@@ -540,6 +556,7 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
             bridge_url: str = user_input[CONF_BRIDGE_URL].strip()
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
             verify_ssl: bool = bool(user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))
+            telegram_bots = _telegram_bots_from_input(user_input)
 
             # Validate bridge but don't block — warn and continue
             if bridge_url:
@@ -552,23 +569,67 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
                         error,
                     )
 
+            new_data = {
+                **self.config_entry.data,
+                CONF_BRIDGE_URL: bridge_url,
+                CONF_BRIDGE_TOKEN: bridge_token,
+                CONF_VERIFY_SSL: verify_ssl,
+                CONF_TELEGRAM_BOTS: telegram_bots,
+            }
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
-                data={
-                    **self.config_entry.data,
-                    CONF_BRIDGE_URL: bridge_url,
-                    CONF_BRIDGE_TOKEN: bridge_token,
-                    CONF_VERIFY_SSL: verify_ssl,
-                },
+                data=new_data,
             )
             return self.async_create_entry(title="", data={})
 
+        current_bots = self.config_entry.data.get(CONF_TELEGRAM_BOTS) or {}
+        if not isinstance(current_bots, dict):
+            current_bots = {}
+        current_principal = current_bots.get(TELEGRAM_BOT_PRINCIPAL, "")
+        current_info = current_bots.get(TELEGRAM_BOT_INFO, "")
+
+        schema_dict: dict[Any, Any] = {
+            vol.Optional(
+                CONF_BRIDGE_URL,
+                default=self.config_entry.data.get(CONF_BRIDGE_URL, ""),
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.URL)
+            ),
+            vol.Optional(
+                CONF_BRIDGE_TOKEN,
+                default=self.config_entry.data.get(
+                    CONF_BRIDGE_TOKEN, DEFAULT_BRIDGE_TOKEN
+                ),
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+            ),
+            vol.Optional(
+                CONF_VERIFY_SSL,
+                default=self.config_entry.data.get(
+                    CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL
+                ),
+            ): selector.BooleanSelector(),
+        }
+        # Config-entry selectors: omit default when empty so HA shows "none".
+        principal_key: Any = (
+            vol.Optional("telegram_bot_principal", default=current_principal)
+            if current_principal
+            else vol.Optional("telegram_bot_principal")
+        )
+        info_key: Any = (
+            vol.Optional("telegram_bot_info", default=current_info)
+            if current_info
+            else vol.Optional("telegram_bot_info")
+        )
+        schema_dict[principal_key] = selector.ConfigEntrySelector(
+            selector.ConfigEntrySelectorConfig(integration="telegram_bot")
+        )
+        schema_dict[info_key] = selector.ConfigEntrySelector(
+            selector.ConfigEntrySelectorConfig(integration="telegram_bot")
+        )
+
         return self.async_show_form(
             step_id="init",
-            data_schema=_bridge_schema(
-                self.config_entry.data.get(CONF_BRIDGE_URL, ""),
-                self.config_entry.data.get(CONF_BRIDGE_TOKEN, DEFAULT_BRIDGE_TOKEN),
-                self.config_entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
-            ),
+            data_schema=vol.Schema(schema_dict),
             errors=errors,
         )

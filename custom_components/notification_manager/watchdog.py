@@ -22,6 +22,7 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     DOMAIN,
+    TELEGRAM_BOT_PRINCIPAL,
     WATCHDOG_CHECK_INTERVAL_MINUTES,
     WATCHDOG_CRITICAL_ENTITIES,
     WATCHDOG_CRITICAL_INTERVAL_MINUTES,
@@ -31,6 +32,7 @@ from .const import (
     WATCHDOG_COOLDOWN_HOURS,
     WATCHDOG_TELEGRAM_CHAT_IDS,
 )
+from .messaging import _async_call_telegram
 from .runtime import _get_runtime_config
 from .telegram_text import PARSE_MODE_HTML, escape_html
 
@@ -203,22 +205,20 @@ class EntityWatchdog:
             await self._async_send_alert(message)
 
     async def _async_send_alert(self, message: str) -> None:
-        """Send alert via Telegram."""
+        """Send alert via Telegram (always principal bot)."""
         chat_ids = (
             WATCHDOG_TELEGRAM_CHAT_IDS
             or _get_runtime_config(self._entry)["bridge_alert_chat_ids"]
         )
         for chat_id in chat_ids:
             try:
-                await self._hass.services.async_call(
-                    "telegram_bot",
-                    "send_message",
-                    {
-                        "chat_id": chat_id,
-                        "message": message,
-                        "parse_mode": PARSE_MODE_HTML,
-                    },
-                    blocking=True,
+                await _async_call_telegram(
+                    self._hass,
+                    chat_id,
+                    message,
+                    parse_mode=PARSE_MODE_HTML,
+                    entry=self._entry,
+                    telegram_bot=TELEGRAM_BOT_PRINCIPAL,
                 )
                 _LOGGER.debug("Watchdog alert sent to chat_id %s", chat_id)
             except Exception as exc:  # noqa: BLE001

@@ -475,3 +475,26 @@ class TestReconfigureStructureValidation:
 
         assert result["errors"] == {"phone_targets_json": "invalid_structure"}
         next_step_mock.assert_not_awaited()
+
+
+class TestTelegramBotsOptionsHelper:
+    """Options-flow helper that builds the telegram_bots map."""
+
+    def test_builds_principal_and_info(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        assert cf._telegram_bots_from_input(
+            {
+                "telegram_bot_principal": "01PRINCIPAL",
+                "telegram_bot_info": "01INFO",
+            }
+        ) == {"principal": "01PRINCIPAL", "info": "01INFO"}
+
+    def test_omits_blank_info(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        assert cf._telegram_bots_from_input(
+            {"telegram_bot_principal": "01PRINCIPAL", "telegram_bot_info": "  "}
+        ) == {"principal": "01PRINCIPAL"}
+
+    def test_empty_when_unset(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        assert cf._telegram_bots_from_input({}) == {}

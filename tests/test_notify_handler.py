@@ -35,6 +35,7 @@ def _make_call(**overrides):
         "photo_path": "",
         "photo_url": "",
         "parse_mode": "",
+        "telegram_bot": "principal",
         **overrides,
     }
     return call

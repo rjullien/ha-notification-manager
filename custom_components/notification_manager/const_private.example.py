@@ -64,6 +64,14 @@ TELEGRAM_GROUPS = {
     # "another_group": -1009876543210,
 }
 
+# ── Logical Telegram bots → telegram_bot config entry ids (optional) ──────────
+# Prefer configuring these in the integration Options UI (config entry selectors).
+# Required when more than one telegram_bot entry exists (HA 2026.10+).
+# TELEGRAM_BOTS = {
+#     "principal": "01EXAMPLEPRINCIPALENTRYID000",
+#     "info": "01EXAMPLEINFOENTRYID00000000",
+# }
+
 # ── Tailscale DNS overrides (optional) ────────────────────────────────────────
 # HA OS containers can't resolve MagicDNS names. Map hostname → Tailscale IP;
 # resolution happens in-process (no /etc/hosts modification).

@@ -76,6 +76,7 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 | `notification_tel` | string | `"all"` | Phone targets — person names (space-separated) or `"none"` |
 | `notification_whatsapp` | string | `"none"` | WhatsApp targets — person names (space-separated) or `"none"` |
 | `notification_alexa` | string | `""` | Alexa targets — keywords matched against entity IDs (space-separated) or `"aucun"` |
+| `telegram_bot` | string | `"principal"` | Logical Telegram bot: `principal` (default) or `info`. See [Multiple Telegram bots](#multiple-telegram-bots) |
 
 ### Target resolution
 
@@ -93,6 +94,11 @@ A production-grade Home Assistant custom component for multi-channel notificatio
 
 **Photos** (`photo_path` / `photo_url`):
 - Telegram only. If both are set, **`photo_path` wins** (`photo_url` ignored).
+
+**Telegram bot** (`telegram_bot`):
+- `"principal"` (default) — existing callers keep working without changes
+- `"info"` — route via the optional Info bot; falls back to principal with a warning if Info is missing, disabled, or does not allowlist the recipient chat
+- Watchdog / bridge self-alerts always use principal
 
 **Alexa** (`notification_alexa`) — pattern matching:
 - Space-separated **keywords** matched as substrings against `media_player.*` entity IDs
@@ -144,6 +150,38 @@ data:
   notification_alexa: "kitchen bedroom"
   notification_tel: "none"
 ```
+
+### Telegram via the Info bot
+
+```yaml
+service: notification_manager.notify
+data:
+  message_tel: "Heating signal degraded"
+  notification_tel: "alice"
+  telegram_bot: info
+```
+
+---
+
+## Multiple Telegram bots
+
+Home Assistant 2025.9+ / 2026.10 requires a `config_entry_id` (or notify `entity_id`) on `telegram_bot.send_*` when **more than one** `telegram_bot` config entry exists. Without it, sends fail with `Please specify at least 1 notify entity`.
+
+Configure the mapping under **Settings → Devices & Services → Notification Manager → Configure** (options):
+
+| Logical bot | Option field | Required |
+|-------------|--------------|----------|
+| `principal` | Principal Telegram bot | Yes when 2+ `telegram_bot` entries exist (auto-detected if only one) |
+| `info` | Info Telegram bot | Optional |
+
+Stored as `telegram_bots: {principal: <entry_id>, info: <entry_id>}` on the integration entry.
+
+### Migration (two bots)
+
+1. Install / update Notification Manager **1.12.0+**
+2. Open the integration **options** and select the principal (and optional Info) `telegram_bot` entries
+3. Re-enable the Info `telegram_bot` entry if it was disabled as a workaround
+4. Callers that omit `telegram_bot` keep using principal; pass `telegram_bot: info` only where needed
 
 ---
 
@@ -246,6 +284,7 @@ WATCHDOG_COOLDOWN_HOURS = 6                # Hours between re-alerts
 | Service not available | Restart HA; check logs for `notification_manager` |
 | Alexa TTS not working | Verify Alexa Media Player integration + entity IDs in `const.py` |
 | WhatsApp not delivered | Check `sensor.notification_manager_whatsapp_status`; verify bridge URL/token |
+| Telegram: `Please specify at least 1 notify entity` | Configure `telegram_bots.principal` (and `info` if used) in options — required with 2+ `telegram_bot` entries |
 | Volume not restored | Resting volumes are persisted in `.storage`; a player still at TTS volume 60 s after HA starts is restored automatically. Admins can call `notification_manager.restore_alexa_volumes` for manual recovery. |
 
 ---

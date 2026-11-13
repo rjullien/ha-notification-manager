@@ -21,12 +21,14 @@ from .const import (
     BRIDGE_ALERT_CHAT_IDS as _CONST_BRIDGE_ALERT_CHAT_IDS,
     BRIDGE_URL_PLACEHOLDER,
     CONF_BRIDGE_URL,
+    CONF_TELEGRAM_BOTS,
     CONF_VERIFY_SSL,
     DEFAULT_BRIDGE_URL,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     PHONE_DEFAULT_TARGETS as _CONST_PHONE_DEFAULT_TARGETS,
     PHONE_TARGETS as _CONST_PHONE_TARGETS,
+    TELEGRAM_BOTS as _CONST_TELEGRAM_BOTS,
     TELEGRAM_GROUPS as _CONST_TELEGRAM_GROUPS,
     WHATSAPP_CONTACTS as _CONST_WHATSAPP_CONTACTS,
 )
@@ -92,6 +94,7 @@ def _get_runtime_config(entry: ConfigEntry) -> dict:
         ),
         "bridge_alert_chat_ids": d.get("bridge_alert_chat_ids") or list(_CONST_BRIDGE_ALERT_CHAT_IDS),
         "telegram_groups": d.get("telegram_groups") or _CONST_TELEGRAM_GROUPS,
+        CONF_TELEGRAM_BOTS: d.get(CONF_TELEGRAM_BOTS) or dict(_CONST_TELEGRAM_BOTS),
     }
 
 

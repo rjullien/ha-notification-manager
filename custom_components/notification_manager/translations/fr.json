@@ -80,11 +80,13 @@
     "step": {
       "init": {
         "title": "Options Notification Manager",
-        "description": "Modifiez la connexion au pont WhatsApp. Utilisez Reconfigurer (⚙ Configurer) pour tous les autres paramètres.",
+        "description": "Modifiez la connexion au pont WhatsApp et associez les bots Telegram logiques (principal / info) aux entrées telegram_bot. Obligatoire dès qu'il existe plus d'une entrée telegram_bot. Utilisez Reconfigurer (⚙ Configurer) pour les contacts téléphone/Alexa/alertes.",
         "data": {
           "bridge_url": "URL du pont WhatsApp",
           "bridge_token": "Token d'authentification",
-          "verify_ssl": "Vérifier le certificat TLS (décocher pour les certificats auto-signés)"
+          "verify_ssl": "Vérifier le certificat TLS (décocher pour les certificats auto-signés)",
+          "telegram_bot_principal": "Bot Telegram principal (entrée de config)",
+          "telegram_bot_info": "Bot Telegram Info (entrée optionnelle)"
         }
       }
     }

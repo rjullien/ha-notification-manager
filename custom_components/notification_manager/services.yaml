@@ -136,6 +136,25 @@ notify:
             - value: "markdown"
               label: "Markdown"
 
+    telegram_bot:
+      name: Bot Telegram
+      description: >
+        Bot Telegram logique à utiliser pour ce message.
+        principal = bot principal (défaut, rétrocompatible).
+        info = bot Info (options → telegram_bots.info) ; si absent,
+        désactivé, ou chat non autorisé, repli automatique sur
+        principal avec un warning dans les logs.
+      example: "principal"
+      required: false
+      default: "principal"
+      selector:
+        select:
+          options:
+            - value: "principal"
+              label: "Principal"
+            - value: "info"
+              label: "Info"
+
 whatsapp_bridge_logs:
   name: "WhatsApp Bridge Logs"
   description: >
