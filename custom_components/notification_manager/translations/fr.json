@@ -86,7 +86,8 @@
           "bridge_token": "Token d'authentification",
           "verify_ssl": "Vérifier le certificat TLS (décocher pour les certificats auto-signés)",
           "telegram_bot_principal": "Bot Telegram principal (entrée de config)",
-          "telegram_bot_info": "Bot Telegram Info (entrée optionnelle)"
+          "telegram_bot_info": "Bot Telegram Info (entrée optionnelle)",
+          "clear_telegram_bots": "Effacer le mapping des bots Telegram (écrase TELEGRAM_BOTS privé)"
         }
       }
     }

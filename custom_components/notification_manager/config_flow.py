@@ -576,16 +576,29 @@ def _bot_selector_optional(field_name: str, suggested: str) -> Any:
 def _merge_telegram_bots_into_entry_data(
     entry_data: dict[str, Any],
     telegram_bots: dict[str, str],
+    *,
+    user_input: dict[str, Any],
 ) -> dict[str, Any]:
     """Apply telegram_bots to a copy of entry data.
 
-    Selectors are prefilled with ``suggested_value`` (not schema ``default``),
-    so the frontend re-submits unchanged non-empty selections and omits cleared
-    fields. An empty map therefore means "no bots selected" and must persist as
-    ``{}`` to override a private ``TELEGRAM_BOTS`` fallback.
+    HA omits empty optional selectors on submit. That makes "both keys absent"
+    ambiguous (bridge-only save vs clear-both). Rules:
+
+    * Non-empty map → store it (unchanged suggested values are re-sent).
+    * ``clear_telegram_bots`` true → store ``{}`` (explicit full clear).
+    * At least one bot selector key present → store the (possibly partial) map.
+    * Both selector keys absent → leave the existing mapping untouched.
     """
     new_data = dict(entry_data)
-    new_data[CONF_TELEGRAM_BOTS] = dict(telegram_bots)
+    clear_all = bool(user_input.get("clear_telegram_bots"))
+    bot_key_present = (
+        "telegram_bot_principal" in user_input or "telegram_bot_info" in user_input
+    )
+    if clear_all:
+        new_data[CONF_TELEGRAM_BOTS] = {}
+    elif telegram_bots or bot_key_present:
+        new_data[CONF_TELEGRAM_BOTS] = dict(telegram_bots)
+    # else: both keys omitted — preserve entry_data's telegram_bots (or absence)
     return new_data
 
 
@@ -629,6 +642,7 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
                     CONF_VERIFY_SSL: verify_ssl,
                 },
                 telegram_bots,
+                user_input=user_input,
             )
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
@@ -672,6 +686,12 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
             info_field: selector.ConfigEntrySelector(
                 selector.ConfigEntrySelectorConfig(integration="telegram_bot")
             ),
+            # Explicit full clear: both selectors omitted is otherwise
+            # indistinguishable from a bridge-only submit (HA drops empty fields).
+            vol.Optional(
+                "clear_telegram_bots",
+                default=False,
+            ): selector.BooleanSelector(),
         }
 
         return self.async_show_form(

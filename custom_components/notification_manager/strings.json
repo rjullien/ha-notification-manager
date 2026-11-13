@@ -86,7 +86,8 @@
           "bridge_token": "Authentication token",
           "verify_ssl": "Verify TLS certificate (disable for self-signed certificates)",
           "telegram_bot_principal": "Principal Telegram bot (config entry)",
-          "telegram_bot_info": "Info Telegram bot (optional config entry)"
+          "telegram_bot_info": "Info Telegram bot (optional config entry)",
+          "clear_telegram_bots": "Clear Telegram bot mapping (override private TELEGRAM_BOTS)"
         }
       }
     }

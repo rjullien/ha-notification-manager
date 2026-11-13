@@ -529,21 +529,60 @@ class TestTelegramBotsOptionsHelper:
         ):
             assert cf._effective_telegram_bots_for_form(entry) == {}
 
-    def test_merge_empty_persists_empty_to_override_private(self):
-        """Cleared selectors (omitted empty fields) must store {}."""
+    def test_merge_bridge_only_preserves_saved_mapping(self):
+        """Both bot keys omitted (bridge-only) must not wipe telegram_bots."""
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {
+                "bridge_url": "http://b",
+                "telegram_bots": {"principal": "01P", "info": "01I"},
+            },
+            {},
+            user_input={
+                "bridge_url": "http://new",
+                "bridge_token": "",
+                "verify_ssl": True,
+            },
+        )
+        assert merged["telegram_bots"] == {"principal": "01P", "info": "01I"}
+
+    def test_merge_bridge_only_preserves_absent_key_for_private_fallback(self):
         cf = TestReconfigurePreservesEntryData()._import()
         merged = cf._merge_telegram_bots_into_entry_data(
             {"bridge_url": "http://b"},
             {},
+            user_input={"bridge_url": "http://new", "verify_ssl": True},
+        )
+        assert "telegram_bots" not in merged
+
+    def test_merge_explicit_clear_flag_persists_empty(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {"telegram_bots": {"principal": "01P"}},
+            {},
+            user_input={"clear_telegram_bots": True, "verify_ssl": True},
         )
         assert merged["telegram_bots"] == {}
-        assert merged["bridge_url"] == "http://b"
+
+    def test_merge_partial_selector_updates_map(self):
+        """One selector kept, the other omitted → store the partial map."""
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {"telegram_bots": {"principal": "01P", "info": "01I"}},
+            {"info": "01I"},
+            user_input={"telegram_bot_info": "01I", "verify_ssl": True},
+        )
+        assert merged["telegram_bots"] == {"info": "01I"}
 
     def test_merge_nonempty_stores_map(self):
         cf = TestReconfigurePreservesEntryData()._import()
         merged = cf._merge_telegram_bots_into_entry_data(
             {},
             {"principal": "01P", "info": "01I"},
+            user_input={
+                "telegram_bot_principal": "01P",
+                "telegram_bot_info": "01I",
+            },
         )
         assert merged["telegram_bots"] == {"principal": "01P", "info": "01I"}
 
