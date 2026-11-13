@@ -94,7 +94,13 @@ def _get_runtime_config(entry: ConfigEntry) -> dict:
         ),
         "bridge_alert_chat_ids": d.get("bridge_alert_chat_ids") or list(_CONST_BRIDGE_ALERT_CHAT_IDS),
         "telegram_groups": d.get("telegram_groups") or _CONST_TELEGRAM_GROUPS,
-        CONF_TELEGRAM_BOTS: d.get(CONF_TELEGRAM_BOTS) or dict(_CONST_TELEGRAM_BOTS),
+        # Empty {} from options (cleared selectors) must win over private
+        # TELEGRAM_BOTS — use default only when the key is absent.
+        CONF_TELEGRAM_BOTS: (
+            d[CONF_TELEGRAM_BOTS]
+            if CONF_TELEGRAM_BOTS in d and isinstance(d.get(CONF_TELEGRAM_BOTS), dict)
+            else dict(_CONST_TELEGRAM_BOTS)
+        ),
     }
 
 

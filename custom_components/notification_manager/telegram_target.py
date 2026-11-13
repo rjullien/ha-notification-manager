@@ -172,13 +172,65 @@ def _chat_allowed_on_entry(entry: ConfigEntry, chat_id: int | None) -> bool:
 
 
 def _auto_detect_principal(hass: HomeAssistant) -> str | None:
-    """If exactly one telegram_bot entry exists, use it as principal."""
+    """If exactly one telegram_bot entry exists and is usable, use it.
+
+    Counts *all* telegram_bot entries (including disabled). A lone usable
+    entry among several must not silently become principal — that would
+    route default/self-alerts through Info when principal is disabled.
+    """
     entries = _iter_telegram_bot_entries(hass)
-    usable = [e for e in entries if _entry_is_usable(e)]
-    if len(usable) == 1:
-        return usable[0].entry_id
     if len(entries) == 1 and _entry_is_usable(entries[0]):
         return entries[0].entry_id
+    return None
+
+
+def _sole_usable_telegram_entry_id(hass: HomeAssistant) -> str | None:
+    """Return the only usable telegram_bot entry id, if unambiguous."""
+    usable = [e for e in _iter_telegram_bot_entries(hass) if _entry_is_usable(e)]
+    if len(usable) == 1:
+        return usable[0].entry_id
+    return None
+
+
+def _resolve_principal_entry_id(
+    hass: HomeAssistant, entry: ConfigEntry | None
+) -> str | None:
+    """Resolve the principal bot entry id (configured, recovered, or auto)."""
+    bots = _configured_telegram_bots(entry)
+    configured = bots.get(TELEGRAM_BOT_PRINCIPAL)
+
+    if configured:
+        if _entry_is_usable(_get_entry(hass, configured)):
+            return configured
+        _LOGGER.warning(
+            "Configured principal telegram_bot entry %s is missing, "
+            "disabled, or not loaded",
+            configured,
+        )
+        # Bot replacement: stale mapping + exactly one usable entry → recover.
+        recovered = _sole_usable_telegram_entry_id(hass)
+        if recovered:
+            _LOGGER.warning(
+                "Using sole usable telegram_bot entry %s until "
+                "telegram_bots.principal is updated",
+                recovered,
+            )
+            return recovered
+        if len(_iter_telegram_bot_entries(hass)) > 1:
+            _LOGGER.warning(
+                "Multiple telegram_bot entries exist; update "
+                "telegram_bots.principal in options"
+            )
+        return None
+
+    auto = _auto_detect_principal(hass)
+    if auto:
+        return auto
+    if len(_iter_telegram_bot_entries(hass)) > 1:
+        _LOGGER.warning(
+            "Multiple telegram_bot entries exist but telegram_bots.principal "
+            "is not configured — Telegram sends may fail until it is set"
+        )
     return None
 
 
@@ -191,7 +243,8 @@ def resolve_telegram_config_entry_id(
     """Resolve the ``config_entry_id`` for a Telegram send.
 
     * ``principal`` (default): configured principal, else auto-detect when a
-      single telegram_bot entry exists.
+      single telegram_bot entry exists. Stale configured ids recover to the
+      sole usable entry when unambiguous; never return a known-unusable id.
     * ``info``: configured info when usable and (if known) allowlisting the
       chat; otherwise fall back to principal with a warning.
     * Integration self-alerts must always pass ``principal``.
@@ -205,24 +258,11 @@ def resolve_telegram_config_entry_id(
         bot_key = TELEGRAM_BOT_PRINCIPAL
 
     bots = _configured_telegram_bots(entry)
-    principal_id = bots.get(TELEGRAM_BOT_PRINCIPAL) or _auto_detect_principal(hass)
+    principal_id = _resolve_principal_entry_id(hass, entry)
     info_id = bots.get(TELEGRAM_BOT_INFO)
 
     if bot_key == TELEGRAM_BOT_PRINCIPAL:
-        if principal_id and _entry_is_usable(_get_entry(hass, principal_id)):
-            return principal_id
-        if principal_id:
-            _LOGGER.warning(
-                "Configured principal telegram_bot entry %s is missing, "
-                "disabled, or not loaded",
-                principal_id,
-            )
-        elif len(_iter_telegram_bot_entries(hass)) > 1:
-            _LOGGER.warning(
-                "Multiple telegram_bot entries exist but telegram_bots.principal "
-                "is not configured — Telegram sends may fail until it is set"
-            )
-        return principal_id if principal_id else None
+        return principal_id
 
     # info requested
     fallback_reason: str | None = None
@@ -241,18 +281,9 @@ def resolve_telegram_config_entry_id(
         else:
             return info_id
 
-    if principal_id and _entry_is_usable(_get_entry(hass, principal_id)):
-        _LOGGER.warning(
-            "telegram_bot=info requested but %s — falling back to principal (%s)",
-            fallback_reason,
-            principal_id,
-        )
-        return principal_id
-
     if principal_id:
         _LOGGER.warning(
-            "telegram_bot=info requested but %s; principal %s is also "
-            "unusable — sending with principal id anyway",
+            "telegram_bot=info requested but %s — falling back to principal (%s)",
             fallback_reason,
             principal_id,
         )

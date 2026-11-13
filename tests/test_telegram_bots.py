@@ -218,6 +218,55 @@ class TestResolveTelegramConfigEntryId:
         assert result is None
         assert "telegram_bots.principal" in caplog.text
 
+    def test_disabled_principal_among_two_does_not_auto_pick_info(self, caplog):
+        """Auto-detect must not treat the sole *usable* of several as principal."""
+        a = _tg_entry(PRINCIPAL_ID, disabled_by="user", allowed_chats=[1])
+        b = _tg_entry(INFO_ID, allowed_chats=[1])
+        hass = _make_hass(entries=[a, b])
+        entry = _nm_entry()
+
+        with caplog.at_level(logging.WARNING):
+            result = resolve_telegram_config_entry_id(
+                hass, entry, TELEGRAM_BOT_PRINCIPAL
+            )
+
+        assert result is None
+        assert "telegram_bots.principal" in caplog.text
+
+    def test_stale_principal_recovers_to_sole_usable(self, caplog):
+        """Deleted/replaced principal mapping → sole remaining usable entry."""
+        stale = "01STALEPRINCIPAL000000000000"
+        new = _tg_entry(PRINCIPAL_ID, allowed_chats=[111])
+        hass = _make_hass(entries=[new])
+        entry = _nm_entry(
+            **{CONF_TELEGRAM_BOTS: {TELEGRAM_BOT_PRINCIPAL: stale}}
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = resolve_telegram_config_entry_id(
+                hass, entry, TELEGRAM_BOT_PRINCIPAL, chat_id=111
+            )
+
+        assert result == PRINCIPAL_ID
+        assert "sole usable" in caplog.text
+
+    def test_stale_principal_with_two_usable_returns_none(self, caplog):
+        stale = "01STALEPRINCIPAL000000000000"
+        a = _tg_entry(PRINCIPAL_ID, allowed_chats=[1])
+        b = _tg_entry(INFO_ID, allowed_chats=[1])
+        hass = _make_hass(entries=[a, b])
+        entry = _nm_entry(
+            **{CONF_TELEGRAM_BOTS: {TELEGRAM_BOT_PRINCIPAL: stale}}
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = resolve_telegram_config_entry_id(
+                hass, entry, TELEGRAM_BOT_PRINCIPAL
+            )
+
+        assert result is None
+        assert "missing, disabled, or not loaded" in caplog.text
+
 
 class TestCallTelegramInjectsConfigEntryId:
     """_async_call_telegram always passes config_entry_id when resolvable."""
@@ -402,3 +451,31 @@ class TestApplyTelegramTarget:
         )
         assert out["config_entry_id"] == PRINCIPAL_ID
         assert out["chat_id"] == 5
+
+
+class TestRuntimeTelegramBotsEmptyOverride:
+    """Cleared options {} must not resurrect private TELEGRAM_BOTS."""
+
+    def test_empty_dict_in_entry_data_wins(self):
+        from notification_manager.runtime import _get_runtime_config
+
+        entry = MagicMock()
+        entry.data = {CONF_TELEGRAM_BOTS: {}}
+        with patch(
+            "notification_manager.runtime._CONST_TELEGRAM_BOTS",
+            {TELEGRAM_BOT_PRINCIPAL: "01PRIVATE"},
+        ):
+            cfg = _get_runtime_config(entry)
+        assert cfg[CONF_TELEGRAM_BOTS] == {}
+
+    def test_absent_key_falls_back_to_const(self):
+        from notification_manager.runtime import _get_runtime_config
+
+        entry = MagicMock()
+        entry.data = {}
+        with patch(
+            "notification_manager.runtime._CONST_TELEGRAM_BOTS",
+            {TELEGRAM_BOT_PRINCIPAL: "01PRIVATE"},
+        ):
+            cfg = _get_runtime_config(entry)
+        assert cfg[CONF_TELEGRAM_BOTS] == {TELEGRAM_BOT_PRINCIPAL: "01PRIVATE"}
