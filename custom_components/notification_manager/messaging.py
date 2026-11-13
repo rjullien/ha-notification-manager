@@ -15,10 +15,13 @@ from .const import (
     BRIDGE_RETRIES,
     BRIDGE_SEND_ENDPOINT,
     BRIDGE_TIMEOUT,
+    DEFAULT_TELEGRAM_BOT,
     DEFAULT_VERIFY_SSL,
+    TELEGRAM_BOT_PRINCIPAL,
 )
 from .jid_utils import jid_to_phone
 from .runtime import _bridge_headers, _get_runtime_config
+from .telegram_target import apply_telegram_target
 from .telegram_text import PARSE_MODE_PLAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +36,7 @@ class _WhatsAppSendResult:
 async def _async_send_phone(
     hass: HomeAssistant, entry: ConfigEntry, message: str, notification_tel: str,
     parse_mode: str = "", photo_path: str = "", photo_url: str = "",
+    telegram_bot: str = DEFAULT_TELEGRAM_BOT,
 ) -> None:
     """Send mobile push + Telegram notifications (all targets in parallel)."""
     cfg = _get_runtime_config(entry)
@@ -47,8 +51,9 @@ async def _async_send_phone(
             continue
         sends.append(
             _async_send_phone_target(
-                hass, target_key, target_cfg, message,
+                hass, entry, target_key, target_cfg, message,
                 parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+                telegram_bot=telegram_bot,
             )
         )
 
@@ -57,8 +62,15 @@ async def _async_send_phone(
 
 
 async def _async_send_phone_target(
-    hass: HomeAssistant, target_key: str, target_cfg: dict, message: str,
-    parse_mode: str = "", photo_path: str = "", photo_url: str = "",
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    target_key: str,
+    target_cfg: dict,
+    message: str,
+    parse_mode: str = "",
+    photo_path: str = "",
+    photo_url: str = "",
+    telegram_bot: str = DEFAULT_TELEGRAM_BOT,
 ) -> None:
     """Send mobile push + Telegram to a single phone target."""
     mobile_service = target_cfg.get("mobile")
@@ -92,6 +104,7 @@ async def _async_send_phone_target(
             await _async_call_telegram(
                 hass, telegram_chat_id, message,
                 parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+                entry=entry, telegram_bot=telegram_bot,
             )
             _LOGGER.debug("Telegram sent to chat_id %s", telegram_chat_id)
         except Exception as exc:  # noqa: BLE001
@@ -103,6 +116,9 @@ async def _async_send_phone_target(
 async def _async_call_telegram(
     hass: HomeAssistant, chat_id: int, message: str,
     parse_mode: str = "", photo_path: str = "", photo_url: str = "",
+    *,
+    entry: ConfigEntry | None = None,
+    telegram_bot: str = DEFAULT_TELEGRAM_BOT,
 ) -> None:
     """Call telegram_bot.send_photo / send_message (blocking, errors raise).
 
@@ -113,6 +129,10 @@ async def _async_call_telegram(
     Telegram with "Can't parse entities" and the notification is lost.
     An empty ``parse_mode`` therefore resolves to PARSE_MODE_PLAIN, matching
     what services.yaml already advertises ("Aucun (texte brut)" as default).
+
+    ``config_entry_id`` is injected when a principal/info mapping (or a single
+    auto-detected telegram_bot entry) is available — required by HA when more
+    than one telegram_bot config entry exists.
     """
     effective_parse_mode = parse_mode or PARSE_MODE_PLAIN
 
@@ -126,6 +146,9 @@ async def _async_call_telegram(
         if message:
             photo_data["caption"] = message
         photo_data["parse_mode"] = effective_parse_mode
+        photo_data = apply_telegram_target(
+            photo_data, hass, entry, telegram_bot=telegram_bot
+        )
         await hass.services.async_call(
             "telegram_bot", "send_photo", photo_data, blocking=True,
         )
@@ -135,6 +158,9 @@ async def _async_call_telegram(
             "message": message,
             "parse_mode": effective_parse_mode,
         }
+        msg_data = apply_telegram_target(
+            msg_data, hass, entry, telegram_bot=telegram_bot
+        )
         await hass.services.async_call(
             "telegram_bot", "send_message", msg_data, blocking=True,
         )
@@ -153,6 +179,7 @@ def _resolve_phone_targets(notification_tel: str, phone_default_targets: list) -
 async def _async_send_telegram_group(
     hass: HomeAssistant, entry: ConfigEntry, message: str, group_name: str,
     parse_mode: str = "", photo_path: str = "", photo_url: str = "",
+    telegram_bot: str = DEFAULT_TELEGRAM_BOT,
 ) -> None:
     """Send a message or photo to a Telegram group by name."""
     cfg = _get_runtime_config(entry)
@@ -175,6 +202,7 @@ async def _async_send_telegram_group(
         await _async_call_telegram(
             hass, chat_id_int, message,
             parse_mode=parse_mode, photo_path=photo_path, photo_url=photo_url,
+            entry=entry, telegram_bot=telegram_bot,
         )
         _LOGGER.debug("Telegram group '%s' (chat_id=%s) sent", group_name, chat_id_int)
     except Exception as exc:  # noqa: BLE001
@@ -354,19 +382,19 @@ async def _async_send_bridge_alert(hass: HomeAssistant, entry: ConfigEntry, mess
 
     Always send ``parse_mode=plain_text``: omitting it lets telegram_bot default
     to markdown, so entity_ids / underscores in the alert body can fail silently.
+
+    Integration self-alerts always use the principal bot (never info).
     """
     cfg = _get_runtime_config(entry)
     for chat_id in cfg["bridge_alert_chat_ids"]:
         try:
-            await hass.services.async_call(
-                "telegram_bot",
-                "send_message",
-                {
-                    "chat_id": chat_id,
-                    "message": message,
-                    "parse_mode": PARSE_MODE_PLAIN,
-                },
-                blocking=True,
+            await _async_call_telegram(
+                hass,
+                chat_id,
+                message,
+                parse_mode=PARSE_MODE_PLAIN,
+                entry=entry,
+                telegram_bot=TELEGRAM_BOT_PRINCIPAL,
             )
         except Exception as exc:  # noqa: BLE001
             _LOGGER.error(

@@ -80,11 +80,14 @@
     "step": {
       "init": {
         "title": "Notification Manager Options",
-        "description": "Update the WhatsApp bridge connection. Use Reconfigure (⚙ Configure) for all other settings.",
+        "description": "Update the WhatsApp bridge connection and map logical Telegram bots (principal / info) to telegram_bot config entries. Required when more than one telegram_bot entry exists. Use Reconfigure (⚙ Configure) for phone/Alexa/alert contacts.",
         "data": {
           "bridge_url": "WhatsApp bridge URL",
           "bridge_token": "Authentication token",
-          "verify_ssl": "Verify TLS certificate (disable for self-signed certificates)"
+          "verify_ssl": "Verify TLS certificate (disable for self-signed certificates)",
+          "telegram_bot_principal": "Principal Telegram bot (config entry)",
+          "telegram_bot_info": "Info Telegram bot (optional config entry)",
+          "clear_telegram_bots": "Clear Telegram bot mapping (override private TELEGRAM_BOTS)"
         }
       }
     }

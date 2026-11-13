@@ -122,6 +122,17 @@ TAILSCALE_DNS_OVERRIDES: dict[str, str] = {}
 # Dict of {name: chat_id} for Telegram group targets
 TELEGRAM_GROUPS: dict = {}
 
+# Logical Telegram bots → telegram_bot config entry ids.
+# Example: {"principal": "01ABC…", "info": "01DEF…"}
+# Principal is required when multiple telegram_bot entries exist; if omitted
+# and exactly one entry is loaded, that entry is used automatically.
+# Info is optional; notify calls that ask for info fall back to principal.
+CONF_TELEGRAM_BOTS = "telegram_bots"
+TELEGRAM_BOT_PRINCIPAL = "principal"
+TELEGRAM_BOT_INFO = "info"
+DEFAULT_TELEGRAM_BOT = TELEGRAM_BOT_PRINCIPAL
+TELEGRAM_BOTS: dict[str, str] = {}
+
 # ── Entity Watchdog (override in const_private.py) ───────────────────────────
 
 # List of entity_ids to monitor for unavailable state

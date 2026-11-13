@@ -34,6 +34,8 @@ with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}
 def _make_hass(call_log: list):
     hass = MagicMock()
     hass.data = {}
+    hass.config_entries.async_entries = MagicMock(return_value=[])
+    hass.config_entries.async_get_entry = MagicMock(return_value=None)
 
     async def record(domain, service, data, blocking=False):
         call_log.append((domain, service, dict(data), blocking))

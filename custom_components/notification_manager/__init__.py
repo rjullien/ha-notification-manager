@@ -126,6 +126,9 @@ SERVICE_NOTIFY_SCHEMA = vol.Schema(
         vol.Optional("photo_path", default=""): cv.string,
         vol.Optional("photo_url", default=""): cv.string,
         vol.Optional("parse_mode", default=""): cv.string,
+        vol.Optional("telegram_bot", default="principal"): vol.In(
+            ["principal", "info"]
+        ),
     }
 )
 

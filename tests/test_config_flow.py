@@ -475,3 +475,132 @@ class TestReconfigureStructureValidation:
 
         assert result["errors"] == {"phone_targets_json": "invalid_structure"}
         next_step_mock.assert_not_awaited()
+
+
+class TestTelegramBotsOptionsHelper:
+    """Options-flow helper that builds the telegram_bots map."""
+
+    def test_builds_principal_and_info(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        assert cf._telegram_bots_from_input(
+            {
+                "telegram_bot_principal": "01PRINCIPAL",
+                "telegram_bot_info": "01INFO",
+            }
+        ) == {"principal": "01PRINCIPAL", "info": "01INFO"}
+
+    def test_omits_blank_info(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        assert cf._telegram_bots_from_input(
+            {"telegram_bot_principal": "01PRINCIPAL", "telegram_bot_info": "  "}
+        ) == {"principal": "01PRINCIPAL"}
+
+    def test_empty_when_unset(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        assert cf._telegram_bots_from_input({}) == {}
+
+    def test_form_prefills_from_private_when_key_absent(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        entry = MagicMock()
+        entry.data = {"bridge_url": "http://b"}
+        with patch.object(
+            cf,
+            "_get_runtime_config",
+            return_value={
+                "telegram_bots": {
+                    "principal": "01PRIVATEPRINCIPAL",
+                    "info": "01PRIVATEINFO",
+                }
+            },
+        ):
+            assert cf._effective_telegram_bots_for_form(entry) == {
+                "principal": "01PRIVATEPRINCIPAL",
+                "info": "01PRIVATEINFO",
+            }
+
+    def test_form_respects_explicit_empty_stored_map(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        entry = MagicMock()
+        entry.data = {"telegram_bots": {}}
+        with patch.object(
+            cf,
+            "_get_runtime_config",
+            return_value={"telegram_bots": {"principal": "01PRIVATE"}},
+        ):
+            assert cf._effective_telegram_bots_for_form(entry) == {}
+
+    def test_merge_bridge_only_preserves_saved_mapping(self):
+        """Both bot keys omitted (bridge-only) must not wipe telegram_bots."""
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {
+                "bridge_url": "http://b",
+                "telegram_bots": {"principal": "01P", "info": "01I"},
+            },
+            {},
+            user_input={
+                "bridge_url": "http://new",
+                "bridge_token": "",
+                "verify_ssl": True,
+            },
+        )
+        assert merged["telegram_bots"] == {"principal": "01P", "info": "01I"}
+
+    def test_merge_bridge_only_preserves_absent_key_for_private_fallback(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {"bridge_url": "http://b"},
+            {},
+            user_input={"bridge_url": "http://new", "verify_ssl": True},
+        )
+        assert "telegram_bots" not in merged
+
+    def test_merge_explicit_clear_flag_persists_empty(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {"telegram_bots": {"principal": "01P"}},
+            {},
+            user_input={"clear_telegram_bots": True, "verify_ssl": True},
+        )
+        assert merged["telegram_bots"] == {}
+
+    def test_merge_partial_selector_updates_map(self):
+        """One selector kept, the other omitted → store the partial map."""
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {"telegram_bots": {"principal": "01P", "info": "01I"}},
+            {"info": "01I"},
+            user_input={"telegram_bot_info": "01I", "verify_ssl": True},
+        )
+        assert merged["telegram_bots"] == {"info": "01I"}
+
+    def test_merge_nonempty_stores_map(self):
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {},
+            {"principal": "01P", "info": "01I"},
+            user_input={
+                "telegram_bot_principal": "01P",
+                "telegram_bot_info": "01I",
+            },
+        )
+        assert merged["telegram_bots"] == {"principal": "01P", "info": "01I"}
+
+    def test_bot_selector_uses_suggested_value_not_default(self):
+        """Prefill via description.suggested_value — never vol default."""
+        cf = TestReconfigurePreservesEntryData()._import()
+        cf.vol.Optional.reset_mock()
+
+        cf._bot_selector_optional("telegram_bot_principal", "01PRINCIPAL")
+        cf.vol.Optional.assert_called_with(
+            "telegram_bot_principal",
+            description={"suggested_value": "01PRINCIPAL"},
+        )
+
+        cf.vol.Optional.reset_mock()
+        cf._bot_selector_optional("telegram_bot_info", "")
+        # Empty suggestion → plain Optional with no default/suggested_value
+        cf.vol.Optional.assert_called_with("telegram_bot_info")
+        kwargs = cf.vol.Optional.call_args.kwargs
+        assert "default" not in kwargs
+        assert "description" not in kwargs

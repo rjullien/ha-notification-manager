@@ -24,15 +24,18 @@ from .const import (
     BRIDGE_TIMEOUT,
     CONF_BRIDGE_TOKEN,
     CONF_BRIDGE_URL,
+    CONF_TELEGRAM_BOTS,
     CONF_VERIFY_SSL,
     DEFAULT_BRIDGE_TOKEN,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     PHONE_DEFAULT_TARGETS,
     PHONE_TARGETS,
+    TELEGRAM_BOT_INFO,
+    TELEGRAM_BOT_PRINCIPAL,
     WHATSAPP_CONTACTS,
 )
-from .runtime import _bridge_headers
+from .runtime import _bridge_headers, _get_runtime_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -522,9 +525,87 @@ class NotificationManagerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return NotificationManagerOptionsFlow()
 
 
-class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
-    """Handle options for Notification Manager (bridge URL/token/TLS only).
+def _telegram_bots_from_input(user_input: dict[str, Any]) -> dict[str, str]:
+    """Build the telegram_bots map from options-flow fields."""
+    bots: dict[str, str] = {}
+    principal = user_input.get("telegram_bot_principal")
+    info = user_input.get("telegram_bot_info")
+    if isinstance(principal, str) and principal.strip():
+        bots[TELEGRAM_BOT_PRINCIPAL] = principal.strip()
+    if isinstance(info, str) and info.strip():
+        bots[TELEGRAM_BOT_INFO] = info.strip()
+    return bots
 
+
+def _effective_telegram_bots_for_form(entry: config_entries.ConfigEntry) -> dict[str, str]:
+    """Return bot ids to prefill in the options form.
+
+    Prefer an explicitly stored map (including ``{}``). When the key is
+    absent, show the effective runtime mapping so a private ``TELEGRAM_BOTS``
+    fallback is visible and survives an unrelated bridge-only save.
+    """
+    stored = entry.data.get(CONF_TELEGRAM_BOTS) if CONF_TELEGRAM_BOTS in entry.data else None
+    if isinstance(stored, dict):
+        raw = stored
+    else:
+        raw = _get_runtime_config(entry).get(CONF_TELEGRAM_BOTS) or {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in (TELEGRAM_BOT_PRINCIPAL, TELEGRAM_BOT_INFO):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value.strip()
+    return out
+
+
+def _bot_selector_optional(field_name: str, suggested: str) -> Any:
+    """Build an Optional bot selector key with suggested_value (not default).
+
+    Schema ``default`` is restored when HA omits empty cleared fields; that
+    made clears impossible. ``description.suggested_value`` only prefills UI.
+    """
+    if suggested:
+        return vol.Optional(
+            field_name,
+            description={"suggested_value": suggested},
+        )
+    return vol.Optional(field_name)
+
+
+def _merge_telegram_bots_into_entry_data(
+    entry_data: dict[str, Any],
+    telegram_bots: dict[str, str],
+    *,
+    user_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply telegram_bots to a copy of entry data.
+
+    HA omits empty optional selectors on submit. That makes "both keys absent"
+    ambiguous (bridge-only save vs clear-both). Rules:
+
+    * Non-empty map → store it (unchanged suggested values are re-sent).
+    * ``clear_telegram_bots`` true → store ``{}`` (explicit full clear).
+    * At least one bot selector key present → store the (possibly partial) map.
+    * Both selector keys absent → leave the existing mapping untouched.
+    """
+    new_data = dict(entry_data)
+    clear_all = bool(user_input.get("clear_telegram_bots"))
+    bot_key_present = (
+        "telegram_bot_principal" in user_input or "telegram_bot_info" in user_input
+    )
+    if clear_all:
+        new_data[CONF_TELEGRAM_BOTS] = {}
+    elif telegram_bots or bot_key_present:
+        new_data[CONF_TELEGRAM_BOTS] = dict(telegram_bots)
+    # else: both keys omitted — preserve entry_data's telegram_bots (or absence)
+    return new_data
+
+
+class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
+    """Handle options for Notification Manager.
+
+    Bridge URL/token/TLS plus logical telegram_bot → config entry mapping.
     Note: no custom __init__ — explicitly setting self.config_entry was
     deprecated in HA 2024.11 and removed in 2025.12; the base class now
     provides the config_entry property.
@@ -540,6 +621,7 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
             bridge_url: str = user_input[CONF_BRIDGE_URL].strip()
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
             verify_ssl: bool = bool(user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))
+            telegram_bots = _telegram_bots_from_input(user_input)
 
             # Validate bridge but don't block — warn and continue
             if bridge_url:
@@ -552,23 +634,68 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
                         error,
                     )
 
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data={
+            new_data = _merge_telegram_bots_into_entry_data(
+                {
                     **self.config_entry.data,
                     CONF_BRIDGE_URL: bridge_url,
                     CONF_BRIDGE_TOKEN: bridge_token,
                     CONF_VERIFY_SSL: verify_ssl,
                 },
+                telegram_bots,
+                user_input=user_input,
+            )
+            self.hass.config_entries.async_update_entry(
+                self.config_entry,
+                data=new_data,
             )
             return self.async_create_entry(title="", data={})
 
+        current_bots = _effective_telegram_bots_for_form(self.config_entry)
+        current_principal = current_bots.get(TELEGRAM_BOT_PRINCIPAL, "")
+        current_info = current_bots.get(TELEGRAM_BOT_INFO, "")
+
+        principal_field = _bot_selector_optional(
+            "telegram_bot_principal", current_principal
+        )
+        info_field = _bot_selector_optional("telegram_bot_info", current_info)
+
+        schema_dict: dict[Any, Any] = {
+            vol.Optional(
+                CONF_BRIDGE_URL,
+                default=self.config_entry.data.get(CONF_BRIDGE_URL, ""),
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.URL)
+            ),
+            vol.Optional(
+                CONF_BRIDGE_TOKEN,
+                default=self.config_entry.data.get(
+                    CONF_BRIDGE_TOKEN, DEFAULT_BRIDGE_TOKEN
+                ),
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+            ),
+            vol.Optional(
+                CONF_VERIFY_SSL,
+                default=self.config_entry.data.get(
+                    CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL
+                ),
+            ): selector.BooleanSelector(),
+            principal_field: selector.ConfigEntrySelector(
+                selector.ConfigEntrySelectorConfig(integration="telegram_bot")
+            ),
+            info_field: selector.ConfigEntrySelector(
+                selector.ConfigEntrySelectorConfig(integration="telegram_bot")
+            ),
+            # Explicit full clear: both selectors omitted is otherwise
+            # indistinguishable from a bridge-only submit (HA drops empty fields).
+            vol.Optional(
+                "clear_telegram_bots",
+                default=False,
+            ): selector.BooleanSelector(),
+        }
+
         return self.async_show_form(
             step_id="init",
-            data_schema=_bridge_schema(
-                self.config_entry.data.get(CONF_BRIDGE_URL, ""),
-                self.config_entry.data.get(CONF_BRIDGE_TOKEN, DEFAULT_BRIDGE_TOKEN),
-                self.config_entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
-            ),
+            data_schema=vol.Schema(schema_dict),
             errors=errors,
         )
