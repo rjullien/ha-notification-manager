@@ -11,6 +11,7 @@ recipient chat is not allowlisted on that entry.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -35,7 +36,7 @@ def _configured_telegram_bots(entry: ConfigEntry | None) -> dict[str, str]:
         return {}
     cfg = _get_runtime_config(entry)
     raw = cfg.get(CONF_TELEGRAM_BOTS) or {}
-    if not isinstance(raw, dict):
+    if not isinstance(raw, Mapping):
         return {}
     out: dict[str, str] = {}
     for key in (TELEGRAM_BOT_PRINCIPAL, TELEGRAM_BOT_INFO):
@@ -123,9 +124,9 @@ def _allowed_chat_ids(entry: ConfigEntry) -> set[int] | None:
     except TypeError:
         return None
     if not values:
-        # Empty subentries: treat as "no chats allowlisted" only when the
-        # attribute is a real mapping (dict). MagicMock → None (unknown).
-        if isinstance(subentries, dict):
+        # Empty subentries: treat as "no chats allowlisted" only for a real
+        # Mapping (dict / MappingProxyType). MagicMock → None (unknown).
+        if isinstance(subentries, Mapping):
             return set()
         return None
 
@@ -133,16 +134,17 @@ def _allowed_chat_ids(entry: ConfigEntry) -> set[int] | None:
     saw_chat_subentry = False
     for sub in values:
         sub_type = getattr(sub, "subentry_type", None)
-        if sub_type is None and isinstance(sub, dict):
+        if sub_type is None and isinstance(sub, Mapping):
             sub_type = sub.get("subentry_type")
         # Skip non-chat subentries when the type is known; accept untyped
-        # dicts that still carry chat_id (test fixtures / older shapes).
+        # mappings that still carry chat_id (test fixtures / older shapes).
         if sub_type is not None and sub_type != _SUBENTRY_ALLOWED_CHAT:
             continue
         data = getattr(sub, "data", None)
-        if data is None and isinstance(sub, dict):
+        if data is None and isinstance(sub, Mapping):
             data = sub.get("data")
-        if not isinstance(data, dict):
+        # HA stores ConfigSubentry.data as MappingProxyType, not a plain dict.
+        if not isinstance(data, Mapping):
             continue
         chat_id = data.get("chat_id")
         if chat_id is None:
@@ -184,9 +186,18 @@ def _auto_detect_principal(hass: HomeAssistant) -> str | None:
     return None
 
 
-def _sole_usable_telegram_entry_id(hass: HomeAssistant) -> str | None:
+def _sole_usable_telegram_entry_id(
+    hass: HomeAssistant,
+    *,
+    exclude_ids: set[str] | None = None,
+) -> str | None:
     """Return the only usable telegram_bot entry id, if unambiguous."""
-    usable = [e for e in _iter_telegram_bot_entries(hass) if _entry_is_usable(e)]
+    excluded = exclude_ids or set()
+    usable = [
+        e
+        for e in _iter_telegram_bot_entries(hass)
+        if _entry_is_usable(e) and e.entry_id not in excluded
+    ]
     if len(usable) == 1:
         return usable[0].entry_id
     return None
@@ -195,20 +206,40 @@ def _sole_usable_telegram_entry_id(hass: HomeAssistant) -> str | None:
 def _resolve_principal_entry_id(
     hass: HomeAssistant, entry: ConfigEntry | None
 ) -> str | None:
-    """Resolve the principal bot entry id (configured, recovered, or auto)."""
+    """Resolve the principal bot entry id (configured, recovered, or auto).
+
+    Never substitutes the configured Info bot for principal. If the configured
+    principal entry still exists but is disabled/not loaded, fail closed
+    (return None) rather than silently routing self-alerts through Info.
+    """
     bots = _configured_telegram_bots(entry)
     configured = bots.get(TELEGRAM_BOT_PRINCIPAL)
+    info_id = bots.get(TELEGRAM_BOT_INFO)
 
     if configured:
-        if _entry_is_usable(_get_entry(hass, configured)):
+        configured_entry = _get_entry(hass, configured)
+        if _entry_is_usable(configured_entry):
             return configured
         _LOGGER.warning(
             "Configured principal telegram_bot entry %s is missing, "
             "disabled, or not loaded",
             configured,
         )
-        # Bot replacement: stale mapping + exactly one usable entry → recover.
-        recovered = _sole_usable_telegram_entry_id(hass)
+        # Entry still present (disabled / reloading): do not substitute Info
+        # or any other bot — principal-required sends must fail closed.
+        if configured_entry is not None:
+            _LOGGER.error(
+                "Principal telegram_bot entry %s still exists but is unusable "
+                "— not substituting another bot (including info=%s)",
+                configured,
+                info_id,
+            )
+            return None
+
+        # Principal deleted: recover only to a sole usable entry that is not
+        # the configured Info mapping (bot replacement, not Info failover).
+        exclude = {info_id} if info_id else set()
+        recovered = _sole_usable_telegram_entry_id(hass, exclude_ids=exclude)
         if recovered:
             _LOGGER.warning(
                 "Using sole usable telegram_bot entry %s until "

@@ -35,7 +35,7 @@ from .const import (
     TELEGRAM_BOT_PRINCIPAL,
     WHATSAPP_CONTACTS,
 )
-from .runtime import _bridge_headers
+from .runtime import _bridge_headers, _get_runtime_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -537,6 +537,49 @@ def _telegram_bots_from_input(user_input: dict[str, Any]) -> dict[str, str]:
     return bots
 
 
+def _effective_telegram_bots_for_form(entry: config_entries.ConfigEntry) -> dict[str, str]:
+    """Return bot ids to prefill in the options form.
+
+    Prefer an explicitly stored map (including ``{}``). When the key is
+    absent, show the effective runtime mapping so a private ``TELEGRAM_BOTS``
+    fallback is visible and survives an unrelated bridge-only save.
+    """
+    stored = entry.data.get(CONF_TELEGRAM_BOTS) if CONF_TELEGRAM_BOTS in entry.data else None
+    if isinstance(stored, dict):
+        raw = stored
+    else:
+        raw = _get_runtime_config(entry).get(CONF_TELEGRAM_BOTS) or {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in (TELEGRAM_BOT_PRINCIPAL, TELEGRAM_BOT_INFO):
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            out[key] = value.strip()
+    return out
+
+
+def _merge_telegram_bots_into_entry_data(
+    entry_data: dict[str, Any],
+    telegram_bots: dict[str, str],
+) -> dict[str, Any]:
+    """Apply telegram_bots to a copy of entry data without wiping private fallback.
+
+    * Non-empty map → store it.
+    * Empty map while the key was already stored → store ``{}`` (explicit clear).
+    * Empty map while the key was absent → leave the key absent so private
+      ``TELEGRAM_BOTS`` keeps providing principal/info.
+    """
+    new_data = dict(entry_data)
+    if telegram_bots:
+        new_data[CONF_TELEGRAM_BOTS] = telegram_bots
+    elif CONF_TELEGRAM_BOTS in entry_data:
+        new_data[CONF_TELEGRAM_BOTS] = {}
+    else:
+        new_data.pop(CONF_TELEGRAM_BOTS, None)
+    return new_data
+
+
 class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
     """Handle options for Notification Manager.
 
@@ -569,22 +612,22 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
                         error,
                     )
 
-            new_data = {
-                **self.config_entry.data,
-                CONF_BRIDGE_URL: bridge_url,
-                CONF_BRIDGE_TOKEN: bridge_token,
-                CONF_VERIFY_SSL: verify_ssl,
-                CONF_TELEGRAM_BOTS: telegram_bots,
-            }
+            new_data = _merge_telegram_bots_into_entry_data(
+                {
+                    **self.config_entry.data,
+                    CONF_BRIDGE_URL: bridge_url,
+                    CONF_BRIDGE_TOKEN: bridge_token,
+                    CONF_VERIFY_SSL: verify_ssl,
+                },
+                telegram_bots,
+            )
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
                 data=new_data,
             )
             return self.async_create_entry(title="", data={})
 
-        current_bots = self.config_entry.data.get(CONF_TELEGRAM_BOTS) or {}
-        if not isinstance(current_bots, dict):
-            current_bots = {}
+        current_bots = _effective_telegram_bots_for_form(self.config_entry)
         current_principal = current_bots.get(TELEGRAM_BOT_PRINCIPAL, "")
         current_info = current_bots.get(TELEGRAM_BOT_INFO, "")
 

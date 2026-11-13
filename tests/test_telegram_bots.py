@@ -267,6 +267,80 @@ class TestResolveTelegramConfigEntryId:
         assert result is None
         assert "missing, disabled, or not loaded" in caplog.text
 
+    def test_disabled_principal_does_not_resolve_to_info(self, caplog):
+        """Principal still present but unusable → never substitute Info."""
+        a = _tg_entry(PRINCIPAL_ID, disabled_by="user", allowed_chats=[111])
+        b = _tg_entry(INFO_ID, allowed_chats=[111])
+        hass = _make_hass(entries=[a, b])
+        entry = _nm_entry(
+            **{
+                CONF_TELEGRAM_BOTS: {
+                    TELEGRAM_BOT_PRINCIPAL: PRINCIPAL_ID,
+                    TELEGRAM_BOT_INFO: INFO_ID,
+                }
+            }
+        )
+
+        with caplog.at_level(logging.ERROR):
+            result = resolve_telegram_config_entry_id(
+                hass, entry, TELEGRAM_BOT_PRINCIPAL, chat_id=111
+            )
+
+        assert result is None
+        assert "not substituting another bot" in caplog.text
+
+    def test_deleted_principal_does_not_recover_to_configured_info(self, caplog):
+        """Sole remaining usable entry is Info → still fail closed for principal."""
+        stale = "01STALEPRINCIPAL000000000000"
+        info = _tg_entry(INFO_ID, allowed_chats=[111])
+        hass = _make_hass(entries=[info])
+        entry = _nm_entry(
+            **{
+                CONF_TELEGRAM_BOTS: {
+                    TELEGRAM_BOT_PRINCIPAL: stale,
+                    TELEGRAM_BOT_INFO: INFO_ID,
+                }
+            }
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = resolve_telegram_config_entry_id(
+                hass, entry, TELEGRAM_BOT_PRINCIPAL, chat_id=111
+            )
+
+        assert result is None
+
+    def test_mapping_proxy_allowlist_triggers_info_fallback(self, caplog):
+        """HA stores subentry.data as MappingProxyType — must still parse chat_id."""
+        from types import MappingProxyType
+
+        a = _tg_entry(PRINCIPAL_ID, allowed_chats=[111, 222])
+        b = _tg_entry(INFO_ID, allowed_chats=None)
+        # Real HA shape: MappingProxyType for subentry.data
+        b.subentries = {
+            "sub_111": MagicMock(
+                subentry_type="allowed_chat_ids",
+                data=MappingProxyType({"chat_id": 111}),
+            )
+        }
+        hass = _make_hass(entries=[a, b])
+        entry = _nm_entry(
+            **{
+                CONF_TELEGRAM_BOTS: {
+                    TELEGRAM_BOT_PRINCIPAL: PRINCIPAL_ID,
+                    TELEGRAM_BOT_INFO: INFO_ID,
+                }
+            }
+        )
+
+        with caplog.at_level(logging.WARNING):
+            result = resolve_telegram_config_entry_id(
+                hass, entry, TELEGRAM_BOT_INFO, chat_id=222
+            )
+
+        assert result == PRINCIPAL_ID
+        assert "not allowlisted" in caplog.text
+
 
 class TestCallTelegramInjectsConfigEntryId:
     """_async_call_telegram always passes config_entry_id when resolvable."""
