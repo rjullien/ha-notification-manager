@@ -559,24 +559,33 @@ def _effective_telegram_bots_for_form(entry: config_entries.ConfigEntry) -> dict
     return out
 
 
+def _telegram_bot_fields_submitted(user_input: dict[str, Any]) -> bool:
+    """Return whether the options submit included bot selector keys."""
+    return (
+        "telegram_bot_principal" in user_input or "telegram_bot_info" in user_input
+    )
+
+
 def _merge_telegram_bots_into_entry_data(
     entry_data: dict[str, Any],
     telegram_bots: dict[str, str],
+    *,
+    bots_fields_submitted: bool,
 ) -> dict[str, Any]:
-    """Apply telegram_bots to a copy of entry data without wiping private fallback.
+    """Apply telegram_bots to a copy of entry data.
 
     * Non-empty map → store it.
-    * Empty map while the key was already stored → store ``{}`` (explicit clear).
-    * Empty map while the key was absent → leave the key absent so private
-      ``TELEGRAM_BOTS`` keeps providing principal/info.
+    * Empty map with bot fields present in the submit → store ``{}`` (user
+      cleared the selectors; must override a private ``TELEGRAM_BOTS`` fallback).
+    * Empty map with bot fields omitted → leave the existing key as-is (or
+      absent), so a bridge-only save does not wipe the private fallback.
     """
     new_data = dict(entry_data)
     if telegram_bots:
         new_data[CONF_TELEGRAM_BOTS] = telegram_bots
-    elif CONF_TELEGRAM_BOTS in entry_data:
+    elif bots_fields_submitted:
         new_data[CONF_TELEGRAM_BOTS] = {}
-    else:
-        new_data.pop(CONF_TELEGRAM_BOTS, None)
+    # else: fields omitted — keep whatever entry_data already had (or absent)
     return new_data
 
 
@@ -600,6 +609,7 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
             verify_ssl: bool = bool(user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))
             telegram_bots = _telegram_bots_from_input(user_input)
+            bots_fields_submitted = _telegram_bot_fields_submitted(user_input)
 
             # Validate bridge but don't block — warn and continue
             if bridge_url:
@@ -620,6 +630,7 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
                     CONF_VERIFY_SSL: verify_ssl,
                 },
                 telegram_bots,
+                bots_fields_submitted=bots_fields_submitted,
             )
             self.hass.config_entries.async_update_entry(
                 self.config_entry,

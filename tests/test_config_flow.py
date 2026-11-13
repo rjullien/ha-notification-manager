@@ -529,20 +529,33 @@ class TestTelegramBotsOptionsHelper:
         ):
             assert cf._effective_telegram_bots_for_form(entry) == {}
 
-    def test_merge_empty_without_key_preserves_private_fallback(self):
+    def test_merge_omitted_fields_preserves_absent_key(self):
+        """Bridge-only save (bot keys omitted) must not invent telegram_bots={}."""
         cf = TestReconfigurePreservesEntryData()._import()
         merged = cf._merge_telegram_bots_into_entry_data(
             {"bridge_url": "http://b"},
             {},
+            bots_fields_submitted=False,
         )
         assert "telegram_bots" not in merged
         assert merged["bridge_url"] == "http://b"
 
-    def test_merge_empty_with_existing_key_clears_explicitly(self):
+    def test_merge_omitted_fields_keeps_existing_stored_map(self):
         cf = TestReconfigurePreservesEntryData()._import()
         merged = cf._merge_telegram_bots_into_entry_data(
             {"telegram_bots": {"principal": "01OLD"}},
             {},
+            bots_fields_submitted=False,
+        )
+        assert merged["telegram_bots"] == {"principal": "01OLD"}
+
+    def test_merge_explicit_clear_persists_empty_over_private(self):
+        """Cleared selectors (keys present, empty) must store {} to override private."""
+        cf = TestReconfigurePreservesEntryData()._import()
+        merged = cf._merge_telegram_bots_into_entry_data(
+            {"bridge_url": "http://b"},
+            {},
+            bots_fields_submitted=True,
         )
         assert merged["telegram_bots"] == {}
 
@@ -551,5 +564,6 @@ class TestTelegramBotsOptionsHelper:
         merged = cf._merge_telegram_bots_into_entry_data(
             {},
             {"principal": "01P", "info": "01I"},
+            bots_fields_submitted=True,
         )
         assert merged["telegram_bots"] == {"principal": "01P", "info": "01I"}
