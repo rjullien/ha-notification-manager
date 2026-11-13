@@ -559,33 +559,33 @@ def _effective_telegram_bots_for_form(entry: config_entries.ConfigEntry) -> dict
     return out
 
 
-def _telegram_bot_fields_submitted(user_input: dict[str, Any]) -> bool:
-    """Return whether the options submit included bot selector keys."""
-    return (
-        "telegram_bot_principal" in user_input or "telegram_bot_info" in user_input
-    )
+def _bot_selector_optional(field_name: str, suggested: str) -> Any:
+    """Build an Optional bot selector key with suggested_value (not default).
+
+    Schema ``default`` is restored when HA omits empty cleared fields; that
+    made clears impossible. ``description.suggested_value`` only prefills UI.
+    """
+    if suggested:
+        return vol.Optional(
+            field_name,
+            description={"suggested_value": suggested},
+        )
+    return vol.Optional(field_name)
 
 
 def _merge_telegram_bots_into_entry_data(
     entry_data: dict[str, Any],
     telegram_bots: dict[str, str],
-    *,
-    bots_fields_submitted: bool,
 ) -> dict[str, Any]:
     """Apply telegram_bots to a copy of entry data.
 
-    * Non-empty map → store it.
-    * Empty map with bot fields present in the submit → store ``{}`` (user
-      cleared the selectors; must override a private ``TELEGRAM_BOTS`` fallback).
-    * Empty map with bot fields omitted → leave the existing key as-is (or
-      absent), so a bridge-only save does not wipe the private fallback.
+    Selectors are prefilled with ``suggested_value`` (not schema ``default``),
+    so the frontend re-submits unchanged non-empty selections and omits cleared
+    fields. An empty map therefore means "no bots selected" and must persist as
+    ``{}`` to override a private ``TELEGRAM_BOTS`` fallback.
     """
     new_data = dict(entry_data)
-    if telegram_bots:
-        new_data[CONF_TELEGRAM_BOTS] = telegram_bots
-    elif bots_fields_submitted:
-        new_data[CONF_TELEGRAM_BOTS] = {}
-    # else: fields omitted — keep whatever entry_data already had (or absent)
+    new_data[CONF_TELEGRAM_BOTS] = dict(telegram_bots)
     return new_data
 
 
@@ -609,7 +609,6 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
             bridge_token: str = user_input[CONF_BRIDGE_TOKEN].strip()
             verify_ssl: bool = bool(user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL))
             telegram_bots = _telegram_bots_from_input(user_input)
-            bots_fields_submitted = _telegram_bot_fields_submitted(user_input)
 
             # Validate bridge but don't block — warn and continue
             if bridge_url:
@@ -630,7 +629,6 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
                     CONF_VERIFY_SSL: verify_ssl,
                 },
                 telegram_bots,
-                bots_fields_submitted=bots_fields_submitted,
             )
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
@@ -641,6 +639,11 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
         current_bots = _effective_telegram_bots_for_form(self.config_entry)
         current_principal = current_bots.get(TELEGRAM_BOT_PRINCIPAL, "")
         current_info = current_bots.get(TELEGRAM_BOT_INFO, "")
+
+        principal_field = _bot_selector_optional(
+            "telegram_bot_principal", current_principal
+        )
+        info_field = _bot_selector_optional("telegram_bot_info", current_info)
 
         schema_dict: dict[Any, Any] = {
             vol.Optional(
@@ -663,24 +666,13 @@ class NotificationManagerOptionsFlow(config_entries.OptionsFlow):
                     CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL
                 ),
             ): selector.BooleanSelector(),
+            principal_field: selector.ConfigEntrySelector(
+                selector.ConfigEntrySelectorConfig(integration="telegram_bot")
+            ),
+            info_field: selector.ConfigEntrySelector(
+                selector.ConfigEntrySelectorConfig(integration="telegram_bot")
+            ),
         }
-        # Config-entry selectors: omit default when empty so HA shows "none".
-        principal_key: Any = (
-            vol.Optional("telegram_bot_principal", default=current_principal)
-            if current_principal
-            else vol.Optional("telegram_bot_principal")
-        )
-        info_key: Any = (
-            vol.Optional("telegram_bot_info", default=current_info)
-            if current_info
-            else vol.Optional("telegram_bot_info")
-        )
-        schema_dict[principal_key] = selector.ConfigEntrySelector(
-            selector.ConfigEntrySelectorConfig(integration="telegram_bot")
-        )
-        schema_dict[info_key] = selector.ConfigEntrySelector(
-            selector.ConfigEntrySelectorConfig(integration="telegram_bot")
-        )
 
         return self.async_show_form(
             step_id="init",

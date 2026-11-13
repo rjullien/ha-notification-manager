@@ -20,6 +20,7 @@ with patch.dict(sys.modules, {"notification_manager.const_private": MagicMock()}
         TELEGRAM_BOT_PRINCIPAL,
     )
     from notification_manager.telegram_target import (
+        TelegramTargetUnresolvedError,
         apply_telegram_target,
         resolve_telegram_config_entry_id,
     )
@@ -525,6 +526,56 @@ class TestApplyTelegramTarget:
         )
         assert out["config_entry_id"] == PRINCIPAL_ID
         assert out["chat_id"] == 5
+
+    def test_unresolved_explicit_mapping_aborts_instead_of_omitting_id(self, caplog):
+        """Deleted principal + sole Info left must not send without config_entry_id."""
+        stale = "01STALEPRINCIPAL000000000000"
+        info = _tg_entry(INFO_ID, allowed_chats=[111])
+        hass = _make_hass(entries=[info])
+        entry = _nm_entry(
+            **{
+                CONF_TELEGRAM_BOTS: {
+                    TELEGRAM_BOT_PRINCIPAL: stale,
+                    TELEGRAM_BOT_INFO: INFO_ID,
+                }
+            }
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(
+            TelegramTargetUnresolvedError
+        ):
+            apply_telegram_target(
+                {"chat_id": 111, "message": "watchdog"},
+                hass,
+                entry,
+                "principal",
+            )
+
+        assert "Aborting Telegram send" in caplog.text
+
+    async def test_call_telegram_aborts_when_mapping_unresolved(self, caplog):
+        log: list = []
+        stale = "01STALEPRINCIPAL000000000000"
+        info = _tg_entry(INFO_ID, allowed_chats=[111])
+        hass = _make_hass(log, entries=[info])
+        entry = _nm_entry(
+            **{
+                CONF_TELEGRAM_BOTS: {
+                    TELEGRAM_BOT_PRINCIPAL: stale,
+                    TELEGRAM_BOT_INFO: INFO_ID,
+                }
+            }
+        )
+
+        with caplog.at_level(logging.ERROR), pytest.raises(
+            TelegramTargetUnresolvedError
+        ):
+            await nm._async_call_telegram(
+                hass, 111, "alert", entry=entry, telegram_bot="principal"
+            )
+
+        assert log == []
+        assert "Aborting Telegram send" in caplog.text
 
 
 class TestRuntimeTelegramBotsEmptyOverride:

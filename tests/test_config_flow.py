@@ -529,41 +529,39 @@ class TestTelegramBotsOptionsHelper:
         ):
             assert cf._effective_telegram_bots_for_form(entry) == {}
 
-    def test_merge_omitted_fields_preserves_absent_key(self):
-        """Bridge-only save (bot keys omitted) must not invent telegram_bots={}."""
+    def test_merge_empty_persists_empty_to_override_private(self):
+        """Cleared selectors (omitted empty fields) must store {}."""
         cf = TestReconfigurePreservesEntryData()._import()
         merged = cf._merge_telegram_bots_into_entry_data(
             {"bridge_url": "http://b"},
             {},
-            bots_fields_submitted=False,
-        )
-        assert "telegram_bots" not in merged
-        assert merged["bridge_url"] == "http://b"
-
-    def test_merge_omitted_fields_keeps_existing_stored_map(self):
-        cf = TestReconfigurePreservesEntryData()._import()
-        merged = cf._merge_telegram_bots_into_entry_data(
-            {"telegram_bots": {"principal": "01OLD"}},
-            {},
-            bots_fields_submitted=False,
-        )
-        assert merged["telegram_bots"] == {"principal": "01OLD"}
-
-    def test_merge_explicit_clear_persists_empty_over_private(self):
-        """Cleared selectors (keys present, empty) must store {} to override private."""
-        cf = TestReconfigurePreservesEntryData()._import()
-        merged = cf._merge_telegram_bots_into_entry_data(
-            {"bridge_url": "http://b"},
-            {},
-            bots_fields_submitted=True,
         )
         assert merged["telegram_bots"] == {}
+        assert merged["bridge_url"] == "http://b"
 
     def test_merge_nonempty_stores_map(self):
         cf = TestReconfigurePreservesEntryData()._import()
         merged = cf._merge_telegram_bots_into_entry_data(
             {},
             {"principal": "01P", "info": "01I"},
-            bots_fields_submitted=True,
         )
         assert merged["telegram_bots"] == {"principal": "01P", "info": "01I"}
+
+    def test_bot_selector_uses_suggested_value_not_default(self):
+        """Prefill via description.suggested_value — never vol default."""
+        cf = TestReconfigurePreservesEntryData()._import()
+        cf.vol.Optional.reset_mock()
+
+        cf._bot_selector_optional("telegram_bot_principal", "01PRINCIPAL")
+        cf.vol.Optional.assert_called_with(
+            "telegram_bot_principal",
+            description={"suggested_value": "01PRINCIPAL"},
+        )
+
+        cf.vol.Optional.reset_mock()
+        cf._bot_selector_optional("telegram_bot_info", "")
+        # Empty suggestion → plain Optional with no default/suggested_value
+        cf.vol.Optional.assert_called_with("telegram_bot_info")
+        kwargs = cf.vol.Optional.call_args.kwargs
+        assert "default" not in kwargs
+        assert "description" not in kwargs

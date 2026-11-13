@@ -327,13 +327,23 @@ def resolve_telegram_config_entry_id(
     return None
 
 
+class TelegramTargetUnresolvedError(RuntimeError):
+    """Configured telegram_bots mapping could not resolve a send target."""
+
+
 def apply_telegram_target(
     data: dict[str, Any],
     hass: HomeAssistant,
     entry: ConfigEntry | None,
     telegram_bot: str = TELEGRAM_BOT_PRINCIPAL,
 ) -> dict[str, Any]:
-    """Return a copy of service data with ``config_entry_id`` when resolved."""
+    """Return a copy of service data with ``config_entry_id`` when resolved.
+
+    When an explicit ``telegram_bots`` mapping is configured but the requested
+    bot cannot be resolved, raise ``TelegramTargetUnresolvedError`` instead of
+    omitting ``config_entry_id`` — HA would otherwise auto-pick a sole remaining
+    telegram_bot entry (e.g. Info), routing principal-only sends there.
+    """
     payload = dict(data)
     chat_raw = payload.get("chat_id")
     chat_id: int | None
@@ -346,4 +356,18 @@ def apply_telegram_target(
     )
     if entry_id:
         payload["config_entry_id"] = entry_id
+        return payload
+
+    bots = _configured_telegram_bots(entry)
+    if bots:
+        _LOGGER.error(
+            "Aborting Telegram send: telegram_bots mapping is configured "
+            "but %s could not be resolved (chat_id=%s, mapping=%s)",
+            telegram_bot,
+            chat_id,
+            bots,
+        )
+        raise TelegramTargetUnresolvedError(
+            f"telegram_bot={telegram_bot!r} unresolved with mapping {bots}"
+        )
     return payload
